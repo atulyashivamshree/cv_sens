@@ -18,11 +18,22 @@
 #include "ekf.h"
 
 #define ROLLING_FILTER_WINDOW 40
-#define IMU_FREQUENCY 50.0
-#define DEFAULT_HEIGHT -0.8
+#define IMU_FREQUENCY 215.0
+#define DEFAULT_HEIGHT 0.8
+#define GRAVITY_MSS 9.81
 
 //current orientation
 double phi, theta, psi;
+
+//initializing using the initial values
+bool flag_sonar_enabled;
+bool flag_lamda_initialized;
+
+//timestamp of the last visual sensor
+ros::Time last_cv_stamp;
+
+//storing the corresponding visual and sonar data in a queue
+Queue cv_sonar_correspondance;
 
 //position x,y,z acquired from vslam in the inertial frame
 tf::Vector3 position_vgnd;
@@ -132,26 +143,40 @@ void imuCallback(const sensor_msgs::Imu::ConstPtr& msg)
                   msg->linear_acceleration.y,
                   msg->linear_acceleration.z);
 
-  tf::Vector3 g(0,0,9.81);	//the gravgndty vector
+  tf::Vector3 g(0,0,-9.81);	//the gravgndty vector
 
-  accel_hbf = R_b_to_HBF.transpose()*a_b + g;           //acceleration as obtained in the horizontal body frame and in NED coordinate system
+  accel_hbf = R_b_to_HBF*a_b + g;           //acceleration as obtained in the horizontal body frame and in NED coordinate system
 
-  accel_hbf.setZ(-accel_hbf.getZ());                    //inverting z acceleration to deal with altitude which is positive upwards
-
-  if(ekf_z.x_hat_kplus1_kplus1(0,0) > 0.3)             // the absolute lower limit possible for ultrasonic sensors
+  if(ekf_z.x_hat_kplus1_kplus1(0,0) > 0.3 && ekf_z.x_hat_kplus1_kplus1(0,0) < 4 )             // the absolute lower limit possible for ultrasonic sensors
     ekf_z.prediction(accel_hbf.getZ());
 
+//  std::cout<<"EKF z predicted is"<<ekf_z.x_hat_kplus1_kplus1(0,0)<<"\n";
+
   tf::vector3TFToMsg(accel_hbf, acc_msg_hbf.vector);
+  acc_msg_hbf.vector.x = z_hat_msg.vector.z;
   acc_msg_hbf.header.stamp = msg->header.stamp;
 
   acc_pub_hbf.publish(acc_msg_hbf);
+
+  //check when was the last vision based reading obtained; if(greater than a threshold)then we have to reinitalize the scale and bias
+//  ros::Duration delt = msg->header.stamp - last_cv_stamp;
+  ros::Duration delt = ros::Time::now() - last_cv_stamp;
+//  std::cout<<"time difference is "<<delt.toSec()<<"\n";
+  if(delt.toSec()>5 && flag_lamda_initialized == true)
+  {
+    cv_sonar_correspondance.clear();
+    flag_lamda_initialized = false;
+    position_vgnd.setZero();
+    ROS_INFO("Visual reasings lost : lambda and bias will be reinitialized once VSLAM is recovered ");
+  }
 }
 
 void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg)
 {
+  last_cv_stamp = ros::Time::now();
   position_vgnd.setX(msg->pose.pose.position.x);
-  position_vgnd.setY(msg->pose.pose.position.x);
-  position_vgnd.setZ(msg->pose.pose.position.x);
+  position_vgnd.setY(msg->pose.pose.position.y);
+  position_vgnd.setZ(msg->pose.pose.position.z);
 
   //position in the vslam inertial frame used for debugging data
   pos_msg_vgnd.header.stamp = msg->header.stamp;
@@ -164,11 +189,12 @@ void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg
   R_b_to_VGND.setRotation(q);
   R_b_to_VGND.getRPY(phi_v, theta_v, psi_v);
 
-  std::cout<<"psi_v i "<<psi_v<<"\n";
+//  std::cout<<"psi_v i "<<psi_v<<"\n";
   R_HBF_to_GND.setRPY(0,0,psi_v);
 
   //update the vslam algorithm according to the inertial matrix
-  ekf_z.updateVSLAM(position_vgnd.getZ());
+//  if(flag_lamda_initialized)
+//    ekf_z.updateVSLAM(position_vgnd.getZ());
 
   //publishing pos and velocity in visual GND frame(which is at some psi_0 with respect to the GND frame) calculated to the HLP
   cv_pose_msg.header.stamp = msg->header.stamp;
@@ -185,7 +211,7 @@ void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg
   z_static_states_msg.vector.z = ekf_z.x_hat_kplus1_kplus1(4,0);
 
   pos_pub_vgnd.publish(pos_msg_vgnd);
-  cv_pose_pub.publish(cv_pose_msg);
+//  cv_pose_pub.publish(cv_pose_msg);
   z_static_states_pub.publish(z_static_states_msg);
 
 //  ROS_INFO("psi is %f", psi);
@@ -201,11 +227,16 @@ bool isOutlier(double z)
   for(int i = 0; i<rolling_q.size()-1; i++)
     rolling_q[i] = rolling_q[i+1];
 
+//  std::cout<<"rolled queue is\n";
+//  for(int i = 0; i<rolling_q.size()-1; i++)
+//      std::cout<<rolling_q[i]<<", ";
+//  std::cout<<"\n";
+
   double median = sorted_q[ROLLING_FILTER_WINDOW/2];
 
-//  std::cout<<"front is "<<sorted_q[0]<<"end-2 is "<<sorted_q[ROLLING_FILTER_WINDOW-3]<<"median is" <<median<<"z is "<<z<<"diff is "<<abs(z-median)<<"\n";
+//  std::cout<<"front is "<<sorted_q[0]<<"end-2 is "<<sorted_q[ROLLING_FILTER_WINDOW-3]<<"median is" <<median<<"z is "<<z<<"diff is "<<fabs(z-median)<<"\n";
 
-  if(fabs(z-median) > 0.4)
+  if(fabs(z-median) > 0.6)
     return true;
   else
     return false;
@@ -223,15 +254,44 @@ void px4flowCallback(const px_comm::OpticalFlow::ConstPtr& msg)
   }
   else
   {
-    rolling_q[ROLLING_FILTER_WINDOW-2] = z;
-    ekf_z.updateUltrasonic(z);
+    if(flag_sonar_enabled)
+    {
+      rolling_q[ROLLING_FILTER_WINDOW-2] = z;
+      ekf_z.updateUltrasonic(z);
+      //finding out the scale and bias factor for the vision algorithm
+      if(flag_lamda_initialized == false)
+        {
+          if(position_vgnd.getZ() != 0)
+          {
+            cv_sonar_correspondance.insertElement(position_vgnd.getZ(), z);
+            if(cv_sonar_correspondance.checkData() == true)
+            {
+              float scale, z0;
+              cv_sonar_correspondance.calculateScale(scale, z0);
+              ekf_z.updateScaleBiasSVO(scale, z0);
+              ROS_INFO("Scale: %f and bias:%f for VSLAM initialised", scale, z0);
+              flag_lamda_initialized = true;
+            }
+          }
+        }
+    }
+    else
+      rolling_q[ROLLING_FILTER_WINDOW-2] = ekf_z.x_hat_kplus1_kplus1(0,0);
   }
+
 
   z_hat_msg.header.stamp = msg->header.stamp;
   z_hat_msg.vector.x = ekf_z.x_hat_kplus1_kplus1(0,0);
+//  z_hat_msg.vector.x = z_filter;
+//  ROS_INFO("Scale: %f and bias:%f for VSLAM initialised", ekf_z.x_hat_kplus1_kplus1(3,0), ekf_z.x_hat_kplus1_kplus1(4,0));
   z_hat_msg.vector.y = ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getZ() + ekf_z.x_hat_kplus1_kplus1(4,0) ;
 //  z_hat_msg.vector.z = ekf_z.x_hat_kplus1_kplus1(2,0);
+
   z_hat_msg.vector.z = z;
+
+//  z_hat_msg.vector.x = position_vgnd.getX();
+//  z_hat_msg.vector.y = position_vgnd.getZ();
+//  z_hat_msg.vector.z = position_vgnd.getZ();
 
   z_hat_pub.publish(z_hat_msg);
 }
@@ -242,6 +302,9 @@ int main(int argc, char *argv[])
   ros::NodeHandle n;
 
   R_vb_vgnd_t.setRPY(0,0,0);
+
+  flag_sonar_enabled = true;
+  flag_lamda_initialized = false;
 
   ros::Subscriber vslam_sub = n.subscribe("svo/pose", 10, vslamCallback);
   ros::Subscriber stats_sub = n.subscribe("stats", 100, statsCallback);
@@ -256,6 +319,33 @@ int main(int argc, char *argv[])
   svo_remote_key_pub = n.advertise<std_msgs::String>("svo/remote_key", 5);
   z_static_states_pub = n.advertise<geometry_msgs::Vector3Stamped>("z_static_states", 100);
   waypoint_pub = n.advertise<geometry_msgs::Vector3>("waypoint", 5);
+
+//  Queue rt;
+
+  //DEBUGGING THE QUEUE
+//  for(int i=0; i<MAX_BUFFER_SIZE+5; i++)
+//  {
+//    float x,y, A=0.3;
+//    if(i<50)
+//      x = A;
+//    if(i>=50 && i<100)
+//      x = A + (i-50)/50.0*(-2*A);
+//    if(i>=100)
+//      x = -A;
+//
+//    y = 3.2*x + 2.4;
+//    rt.insertElement(x,y);
+//
+//    if(rt.checkData() == true)
+//      break;
+//  }
+//
+//  float scale, z0;
+//  if(rt.checkData() == true)
+//    rt.calculateScale(scale, z0);
+
+//  std::cout<<"for data mean is "<<rt.mean<<"; std_dev: "<<rt.std_dev<<"\n";
+//  std::cout<<"calculated scale is "<<scale<<" ; "<<z0<<"\n";
 
   ros::spin();
 }

@@ -11,8 +11,14 @@
 #include <tf/tf.h>
 #include <tf/transform_broadcaster.h>
 
+#include <fstream>
+
 #ifndef EKF_H_
 #define EKF_H_
+
+#define MAX_BUFFER_SIZE 150
+#define STD_DEV_THRESHOLD 0.3
+#define DATA_DELAY 6                    //6*33ms = 198ms assuming sonar data comes after a delay of 200ms
 
 using namespace Eigen;
 
@@ -55,6 +61,34 @@ public:
   //perform the update step of the VSLAM
   void updateUltrasonic(double y);
 
+  //update the scale and bias of vSLAM
+  void updateScaleBiasSVO(float scale, float z0);
+
+};
+
+class Queue
+{
+  std::vector<float> bufferX;
+  std::vector<float> bufferY;
+  float var_sum;
+  float sum;
+
+public:
+  float mean;
+  float std_dev;
+
+public:
+  //inserts elements into the queue
+  void insertElement(float valx, float valy);
+
+  //checks if the variance of the data meets a certain minimum threshold
+  bool checkData();
+
+  //returns the scale and constant of the vision estimate
+  void calculateScale(float &scale, float &z_0);
+
+  //clears the buffers and initializes the scale and bias to zero;
+  void clear();
 };
 
 #endif /* EKF_H_ */
