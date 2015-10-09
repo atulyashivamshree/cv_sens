@@ -31,5 +31,8 @@ catkin_package(
 #  DEPENDS system_lib
 )
  
- add_executable(pos_sens src/ekf_vision.cpp src/ekf.cpp)
- target_link_libraries(pos_sens   ${catkin_LIBRARIES} )
+ add_executable(pos_sens_svo src/ekf_svo.cpp src/ekf.cpp)
+ target_link_libraries(pos_sens_svo   ${catkin_LIBRARIES} )
+ 
+ add_executable(pos_sens_aruco src/ekf_aruco.cpp src/ekf.cpp)
+ target_link_libraries(pos_sens_aruco   ${catkin_LIBRARIES} )

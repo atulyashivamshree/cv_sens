@@ -111,7 +111,7 @@ void IMU_CV_EKF::updateScaleBiasSVO(float scale, float z0)
 
 void Queue::insertElement(float valx, float valy)
 {
-  if(bufferX.size() < MAX_BUFFER_SIZE)
+  if(bufferX.size() < max_buffer_size)
   {
     bufferX.push_back(valx);
     bufferY.push_back(valy);
@@ -124,14 +124,14 @@ void Queue::insertElement(float valx, float valy)
     var_sum -= pow(bufferY[0],2);
     sum -= bufferY[0];
 
-    for(int i=0; i<MAX_BUFFER_SIZE-1; i++)
+    for(int i=0; i<max_buffer_size-1; i++)
     {
       bufferX[i] = bufferX[i+1];
       bufferY[i] = bufferY[i+1];
     }
 
-    bufferX[MAX_BUFFER_SIZE-1] = valx;
-    bufferY[MAX_BUFFER_SIZE-1] = valy;
+    bufferX[max_buffer_size-1] = valx;
+    bufferY[max_buffer_size-1] = valy;
 
     var_sum += pow(valy,2);
     sum += valy;
@@ -140,10 +140,10 @@ void Queue::insertElement(float valx, float valy)
 
 bool Queue::checkData()
 {
-  if(bufferX.size()==MAX_BUFFER_SIZE)
+  if(bufferX.size()==max_buffer_size)
   {
-    mean = sum/MAX_BUFFER_SIZE;
-    float temp = var_sum/MAX_BUFFER_SIZE - pow(mean,2);
+    mean = sum/max_buffer_size;
+    float temp = var_sum/max_buffer_size - pow(mean,2);
     if(temp > 0)
     {
       std_dev = sqrt(temp);
@@ -152,7 +152,7 @@ bool Queue::checkData()
 //      for(int i=0;i<bufferY.size(); i++)
 //        std::cout<<bufferY[i]<<", ";
       std::cout<<"\n";
-      if(std_dev > STD_DEV_THRESHOLD)
+      if(std_dev > std_dev_threshold)
         return true;
       else
         return false;
@@ -170,32 +170,32 @@ bool Queue::checkData()
 
 void Queue::calculateScale(float &scale, float &z_0)
 {
-  Matrix<float, MAX_BUFFER_SIZE-DATA_DELAY, 2> A;
-  Matrix<float, MAX_BUFFER_SIZE-DATA_DELAY, 1> b;
-//  MatrixXf A = MatrixXf::Zero(MAX_BUFFER_SIZE,2);
-//  MatrixXf b = MatrixXf::Zero(MAX_BUFFER_SIZE,1);
+//  Matrix<float, max_buffer_size-data_delay, 2> A;
+//  Matrix<float, max_buffer_size-data_delay, 1> b;
+  MatrixXf A = MatrixXf::Zero(max_buffer_size-data_delay,2);
+  MatrixXf b = MatrixXf::Zero(max_buffer_size-data_delay,1);
   Matrix<float, 2, 1> X;
 
-  std::string meas_filename = "/home/atulya/Documents/workspace/AUS/CV_data/queue.csv";
-    std::ofstream outfile_meas;
-    outfile_meas.open(meas_filename.c_str());
+//  std::string meas_filename = "../queue.csv";
+//    std::ofstream outfile_meas;
+//    outfile_meas.open(meas_filename.c_str());
 
   if(checkData() == false)
     return;
 
-  for(int i=0; i<MAX_BUFFER_SIZE-DATA_DELAY; i++)
+  for(int i=0; i<max_buffer_size-data_delay; i++)
   {
     A(i,0) = bufferX[i];
     A(i,1) = 1;
-    b(i,0) = bufferY[(i+DATA_DELAY)%MAX_BUFFER_SIZE];
-    outfile_meas<<bufferX[i]<<","<<b(i,0)<<"\n";
+    b(i,0) = bufferY[(i+data_delay)%max_buffer_size];
+//    outfile_meas<<bufferX[i]<<","<<b(i,0)<<"\n";
   }
 
 //  std::cout<<A.jacobiSvd(ComputeThinU | ComputeThinV).solve(b);
   X=A.colPivHouseholderQr().solve(b);
   scale = X(0,0);
   z_0 = X(1,0);
-  outfile_meas.close();
+//  outfile_meas.close();
 //  MatrixXf A = MatrixXf::Random(3, 2);
 //  VectorXf b = VectorXf::Random(3);
 //  std::cout << "The solution using the QR decomposition is:\n"
@@ -211,4 +211,10 @@ void Queue::clear()
   sum = 0;
   mean = 0;
   std_dev =0;
+}
+Queue::Queue(float threshold, int delay_count, int max_buffer)
+{
+  std_dev_threshold = threshold;
+  data_delay = delay_count;
+  max_buffer_size = max_buffer;
 }

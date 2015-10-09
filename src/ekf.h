@@ -16,10 +16,6 @@
 #ifndef EKF_H_
 #define EKF_H_
 
-#define MAX_BUFFER_SIZE 150
-#define STD_DEV_THRESHOLD 0.3
-#define DATA_DELAY 6                    //6*33ms = 198ms assuming sonar data comes after a delay of 200ms
-
 using namespace Eigen;
 
 class IMU_CV_EKF
@@ -72,12 +68,18 @@ class Queue
   std::vector<float> bufferY;
   float var_sum;
   float sum;
+  float std_dev_threshold;
+  int max_buffer_size;
+  int data_delay;               //if val is6 =>6*25ms = 150ms assuming sonar data comes after a delay of 150ms after vision data and sonar data is coming in at 40Hz
 
 public:
   float mean;
   float std_dev;
 
 public:
+  //constructor for the queue
+  Queue(float threshold, int delay_count, int max_buffer);
+
   //inserts elements into the queue
   void insertElement(float valx, float valy);
 

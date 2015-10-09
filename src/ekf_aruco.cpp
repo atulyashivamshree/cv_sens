@@ -12,8 +12,6 @@
 #include <sensor_msgs/Imu.h>
 
 #include <px_comm/OpticalFlow.h>
-#include "nav_gps/imu_acc.h"
-#include "nav_gps/state_order6.h"
 
 #include "ekf.h"
 
@@ -21,6 +19,10 @@
 #define IMU_FREQUENCY 215.0
 #define DEFAULT_HEIGHT 0.8
 #define GRAVITY_MSS 9.81
+
+#define MAX_BUFFER_SIZE 150
+#define STD_DEV_THRESHOLD 0.225
+#define DATA_DELAY 6
 
 //current orientation
 double phi, theta, psi;
@@ -33,7 +35,7 @@ bool flag_lamda_initialized;
 ros::Time last_cv_stamp;
 
 //storing the corresponding visual and sonar data in a queue
-Queue cv_sonar_correspondance;
+Queue cv_sonar_correspondance(STD_DEV_THRESHOLD, DATA_DELAY, MAX_BUFFER_SIZE);
 
 //position x,y,z acquired from vslam in the inertial frame
 tf::Vector3 position_vgnd;
@@ -171,12 +173,12 @@ void imuCallback(const sensor_msgs::Imu::ConstPtr& msg)
   }
 }
 
-void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg)
+void vslamCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
 {
   last_cv_stamp = ros::Time::now();
-  position_vgnd.setX(msg->pose.pose.position.x);
-  position_vgnd.setY(msg->pose.pose.position.y);
-  position_vgnd.setZ(msg->pose.pose.position.z);
+  position_vgnd.setX(msg->pose.position.x);
+  position_vgnd.setY(msg->pose.position.y);
+  position_vgnd.setZ(msg->pose.position.z);
 
   //position in the vslam inertial frame used for debugging data
   pos_msg_vgnd.header.stamp = msg->header.stamp;
@@ -185,11 +187,11 @@ void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg
   pos_msg_vgnd.vector.z = position_vgnd.getZ();
 
   tf::Quaternion q;
-  tf::quaternionMsgToTF(msg->pose.pose.orientation, q);
+  tf::quaternionMsgToTF(msg->pose.orientation, q);
   R_b_to_VGND.setRotation(q);
   R_b_to_VGND.getRPY(phi_v, theta_v, psi_v);
 
-//  std::cout<<"psi_v i "<<psi_v<<"\n";
+  std::cout<<"phi_v is: "<<phi_v<<"; theta_v is:"<<theta_v<<"; psi_v is: "<<psi_v<<"\n";
   R_HBF_to_GND.setRPY(0,0,psi_v);
 
   //update the vslam algorithm according to the inertial matrix
