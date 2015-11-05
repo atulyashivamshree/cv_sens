@@ -12,6 +12,7 @@
 #include <sensor_msgs/Imu.h>
 
 #include <px_comm/OpticalFlow.h>
+#include <mavros_msgs/RCIn.h>
 
 #include "ekf.h"
 
@@ -21,7 +22,7 @@
 #define GRAVITY_MSS 9.81
 
 #define MAX_BUFFER_SIZE 150
-#define STD_DEV_THRESHOLD 0.3
+#define STD_DEV_THRESHOLD 0.225
 #define DATA_DELAY 6
 
 //current orientation
@@ -92,24 +93,26 @@ ros::Publisher z_static_states_pub;
 std::vector<double> rolling_q(ROLLING_FILTER_WINDOW, DEFAULT_HEIGHT);
 int start, end;
 
-void statsCallback(const geometry_msgs::Vector3Stamped::ConstPtr& msg)
+void statsCallback(const mavros_msgs::RCIn::ConstPtr& msg)
 {
-  int chnl6 = msg->vector.z;
-  if(chnl6 > 2048 && SVO_INITIATED == false && SVO_RESET_SENT == false)
+  //TODO change this channel when configuring remote
+  int chnl_switch = msg->channels[5];
+
+  if(chnl_switch > 2048 && SVO_INITIATED == false && SVO_RESET_SENT == false)
   {
     key_msg.data = "r";
     svo_remote_key_pub.publish(key_msg);
     SVO_RESET_SENT = true;
 
   }
-  if(chnl6 > 2048 && SVO_INITIATED == false && SVO_RESET_SENT == true)
+  if(chnl_switch > 2048 && SVO_INITIATED == false && SVO_RESET_SENT == true)
   {
     key_msg.data = "s";
     svo_remote_key_pub.publish(key_msg);
 
     SVO_INITIATED = true;
   }
-  if(chnl6 < 2048)
+  if(chnl_switch < 2048)
   {
     SVO_RESET_SENT = false;
     SVO_INITIATED = false;
@@ -213,7 +216,10 @@ void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg
   z_static_states_msg.vector.z = ekf_z.x_hat_kplus1_kplus1(4,0);
 
   pos_pub_vgnd.publish(pos_msg_vgnd);
-//  cv_pose_pub.publish(cv_pose_msg);
+
+  if(flag_lamda_initialized)
+    cv_pose_pub.publish(cv_pose_msg);
+
   z_static_states_pub.publish(z_static_states_msg);
 
 //  ROS_INFO("psi is %f", psi);
@@ -296,6 +302,15 @@ void px4flowCallback(const px_comm::OpticalFlow::ConstPtr& msg)
 //  z_hat_msg.vector.z = position_vgnd.getZ();
 
   z_hat_pub.publish(z_hat_msg);
+
+  if(flag_lamda_initialized == false)
+  {
+    cv_pose_msg.header.stamp = msg->header.stamp;
+    cv_pose_msg.pose.position.x = 0;
+    cv_pose_msg.pose.position.y = 0;
+    cv_pose_msg.pose.position.z = ekf_z.x_hat_kplus1_kplus1(0,0);
+    cv_pose_pub.publish(cv_pose_msg);
+  }
 }
 
 int main(int argc, char *argv[])
@@ -309,7 +324,7 @@ int main(int argc, char *argv[])
   flag_lamda_initialized = false;
 
   ros::Subscriber vslam_sub = n.subscribe("svo/pose", 10, vslamCallback);
-  ros::Subscriber stats_sub = n.subscribe("stats", 100, statsCallback);
+  ros::Subscriber stats_sub = n.subscribe("/mavros/rc/in", 100, statsCallback);
   ros::Subscriber rpy_sub = n.subscribe("imu/data_raw", 100, imuCallback);
   ros::Subscriber px4flow_sub = n.subscribe("px4flow/opt_flow", 10, px4flowCallback);
   ros::Subscriber waypoint_sub = n.subscribe("waypoint_ned_i", 5, waypointNEDICallback);

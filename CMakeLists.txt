@@ -11,6 +11,7 @@ find_package(catkin REQUIRED COMPONENTS
   geometry_msgs	
   dynamic_reconfigure
   px_comm
+  mavros_msgs
 )
 SET(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/CMakeModules/")
 find_package(Eigen REQUIRED)
