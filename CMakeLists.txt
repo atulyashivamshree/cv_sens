@@ -10,14 +10,18 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   geometry_msgs	
   dynamic_reconfigure
+  #TODO remove dynamic reconfigure coz its probably not required
+  pluginlib
   px_comm
+  mavros
   mavros_msgs
 )
 SET(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/CMakeModules/")
 find_package(Eigen REQUIRED)
 find_package(OpenCV REQUIRED)
 
-set(CMAKE_C_FLAGS "-std=c99")
+include(EnableCXX11)
+include(MavrosMavlink)
 
 include_directories(
   include
@@ -29,11 +33,19 @@ catkin_package(
   INCLUDE_DIRS include
 #  LIBRARIES hello_asctec_imu
   CATKIN_DEPENDS roscpp sensor_msgs std_msgs geometry_msgs
-#  DEPENDS system_lib
+  DEPENDS Eigen OpenCV
 )
+
+add_library(mavros_debug
+	 src/plugins/hil_state.cpp
+	 src/plugins/sim_state.cpp
+	 src/plugins/attitude.cpp
+	 src/plugins/local_position_ned.cpp
+	 )
+target_link_libraries(mavros_debug ${catkin_LIBRARIES})
+
+add_executable(pos_sens_svo src/ekf_svo.cpp src/ekf.cpp)
+target_link_libraries(pos_sens_svo   ${catkin_LIBRARIES} )
  
- add_executable(pos_sens_svo src/ekf_svo.cpp src/ekf.cpp)
- target_link_libraries(pos_sens_svo   ${catkin_LIBRARIES} )
- 
- add_executable(pos_sens_aruco src/ekf_aruco.cpp src/ekf.cpp)
- target_link_libraries(pos_sens_aruco   ${catkin_LIBRARIES} )
+add_executable(pos_sens_aruco src/ekf_aruco.cpp src/ekf.cpp)
+target_link_libraries(pos_sens_aruco   ${catkin_LIBRARIES} )

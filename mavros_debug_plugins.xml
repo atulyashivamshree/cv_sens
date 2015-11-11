@@ -1,0 +1,14 @@
+<library path="lib/libmavros_debug">
+	<class name="sim_state" type="mavplugin::SimStatePlugin" base_class_type="mavplugin::MavRosPlugin">
+		<description>Publish control system state that are published from the FCU just a temporary debugging variable</description>
+	</class>
+	<class name="hil_state" type="mavplugin::HILStatePlugin" base_class_type="mavplugin::MavRosPlugin">
+		<description>Publish control system state that are published from the FCU just a temporary debugging variable</description>
+	</class>
+	<class name="attitude" type="mavplugin::AttitudePlugin" base_class_type="mavplugin::MavRosPlugin">
+		<description>Publishes the attitude angles roll, pitch and yaw in the ned frame as observed by the fcu</description>
+	</class>
+	<class name="local_position_ned" type="mavplugin::LocalPositionNEDPlugin" base_class_type="mavplugin::MavRosPlugin">
+		<description> Publishes the position and velocity in the NED frame as used in the FCU</description>
+	</class>
+</library>
