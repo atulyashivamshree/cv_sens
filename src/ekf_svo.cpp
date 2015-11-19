@@ -4,94 +4,9 @@
  *  Created on: 29-May-2015
  *      Author: atulya
  */
-#include <ros/ros.h>
-#include <geometry_msgs/Vector3Stamped.h>
-#include <tf/transform_datatypes.h>
-#include <tf/tf.h>
-#include <std_msgs/String.h>
-#include <sensor_msgs/Imu.h>
 
-#include <px_comm/OpticalFlow.h>
-#include <mavros_msgs/RCIn.h>
-
+#include "sensor_fusion.h"
 #include "ekf.h"
-
-#define ROLLING_FILTER_WINDOW 40
-#define IMU_FREQUENCY 215.0
-#define DEFAULT_HEIGHT 0.8
-#define GRAVITY_MSS 9.81
-
-#define MAX_BUFFER_SIZE 150
-#define STD_DEV_THRESHOLD 0.225
-#define DATA_DELAY 6
-
-//current orientation
-double phi, theta, psi;
-
-//initializing using the initial values
-bool flag_sonar_enabled;
-bool flag_lamda_initialized;
-
-//timestamp of the last visual sensor
-ros::Time last_cv_stamp;
-
-//storing the corresponding visual and sonar data in a queue
-Queue cv_sonar_correspondance(STD_DEV_THRESHOLD, DATA_DELAY, MAX_BUFFER_SIZE);
-
-//position x,y,z acquired from vslam in the inertial frame
-tf::Vector3 position_vgnd;
-
-//rotation matrices
-tf::Matrix3x3 R_HBF_to_GND;
-tf::Matrix3x3 R_b_to_HBF;
-tf::Matrix3x3 R_b_to_GND;
-tf::Matrix3x3 R_b_to_VGND;
-tf::Matrix3x3 R_vb_vgnd_t;
-double phi_v, theta_v, psi_v;
-
-//acceleration in the horizontal body fixed frame
-tf::Vector3 accel_hbf;
-
-//position as sensed in vslam frame with respect to an inertial frame
-geometry_msgs::Vector3Stamped pos_msg_vgnd;
-ros::Publisher pos_pub_vgnd;
-
-//position as sensed in vslam body frame
-geometry_msgs::Vector3Stamped pos_msg_vb;
-ros::Publisher pos_pub_vb;
-
-//acceleration as sensed in horizontal body frame
-geometry_msgs::Vector3Stamped acc_msg_hbf;
-ros::Publisher acc_pub_hbf;
-
-//estimated state z_hat and z_hat_dot
-geometry_msgs::Vector3Stamped z_hat_msg;
-ros::Publisher z_hat_pub;
-
-//publishing the current position and velocity in VGND frame
-geometry_msgs::PoseStamped cv_pose_msg;
-ros::Publisher cv_pose_pub;
-
-//publishing svo_remote key
-std_msgs::String key_msg;
-ros::Publisher svo_remote_key_pub;
-
-//converting and publishing the waypoint from ned-i to ned-b frame
-geometry_msgs::Vector3 waypoint_msg_nedb;
-ros::Publisher waypoint_pub;
-
-// bool for setting the home
-bool SVO_INITIATED = false;
-bool SVO_RESET_SENT = false;
-
-// kalman observer for x and y
-IMU_CV_EKF ekf_z(1/IMU_FREQUENCY);
-geometry_msgs::Vector3Stamped z_static_states_msg;
-ros::Publisher z_static_states_pub;
-
-// z queue maintaining last values
-std::vector<double> rolling_q(ROLLING_FILTER_WINDOW, DEFAULT_HEIGHT);
-int start, end;
 
 void statsCallback(const mavros_msgs::RCIn::ConstPtr& msg)
 {
@@ -118,6 +33,100 @@ void statsCallback(const mavros_msgs::RCIn::ConstPtr& msg)
     SVO_INITIATED = false;
   }
 }
+
+void calibrateCamera()
+{
+  //TODO right now the calibration is suspect to outliers, implement ransac to remove them
+  printf("calibrating the camera :\n");
+  MatrixXf A = MatrixXf::Zero(GROUND_PLANE_POINTS,3);
+  MatrixXf b = MatrixXf::Zero(GROUND_PLANE_POINTS,1);
+  Matrix<float, 3, 1> X;
+
+  std::string meas_filename = "/home/atulya/data/queue.csv";
+  std::ofstream outfile_meas;
+  outfile_meas.open(meas_filename.c_str());
+
+  for(int i=0; i<GROUND_PLANE_POINTS; i++)
+  {
+    A(i,0) = ground_points[i](0);
+    A(i,1) = ground_points[i](1);
+    A(i,2) = 1;
+    b(i,0) = -ground_points[i](2);
+    outfile_meas<<A(i,0)<<","<<A(i,1)<<","<<A(i,2)<<","<<b(i,0)<<"\n";
+  }
+
+  //  std::cout<<A.jacobiSvd(ComputeThinU | ComputeThinV).solve(b);
+  X=A.colPivHouseholderQr().solve(b);
+  normal(0) = X(0,0);
+  normal(1) = X(1,0);
+  normal(2) = 1;
+  depth = -X(2,0);
+
+  float theta = atan2(normal(0), normal(2));
+  float phi = atan2(-normal(1), sqrt(pow(normal(0),2)+ pow(normal(2),2)));
+
+  R_calib.setRPY(phi,theta, 0);
+
+  printf("normal is [%f, %f, %f]", normal(0), normal(1), normal(2));
+  printf("depth is %f", depth);
+  ROS_INFO("Roll detected: %f; Pitch detected: %f", phi, theta);
+  outfile_meas.close();
+  ROS_INFO("R is \n[%f, %f, %f]\n[%f, %f, %f]\n[%f, %f, %f]",
+           R_calib.getRow(0).getX(), R_calib.getRow(0).getY(), R_calib.getRow(0).getZ(),
+           R_calib.getRow(1).getX(), R_calib.getRow(1).getY(), R_calib.getRow(1).getZ(),
+           R_calib.getRow(2).getX(), R_calib.getRow(2).getY(), R_calib.getRow(2).getZ());
+
+}
+
+void visualizationMarkerCallback(const visualization_msgs::Marker::ConstPtr& msg)
+{
+  if(msg->ns.compare("pts") == 0 && FLAG_CAMERA_CALIBRATED == false)
+  {
+    if(msg->pose.position.z == 0)
+      return;
+    ground_points[ground_points_index](0) = msg->pose.position.x;
+    ground_points[ground_points_index](1) = msg->pose.position.y;
+    ground_points[ground_points_index](2) = msg->pose.position.z;
+    ground_points_index++;
+    if(ground_points_index == GROUND_PLANE_POINTS)
+    {
+      calibrateCamera();
+      FLAG_CAMERA_CALIBRATED = true;
+    }
+  }
+  if(FLAG_CAMERA_CALIBRATED == true)
+  {
+    tf::Vector3 p(msg->pose.position.x,
+                  msg->pose.position.y,
+                  msg->pose.position.z);
+
+    tf::Vector3 p_calib = R_calib.transpose()*p;
+  //  tf::Vector3 p_calib = p;
+
+
+    points_msg.header.frame_id = "/world";
+    points_msg.header.stamp = msg->header.stamp;
+    points_msg.ns = "calib_"+msg->ns;
+    points_msg.id = msg->id;
+    points_msg.type = visualization_msgs::Marker::CUBE;
+    points_msg.action = msg->action; // 0 = add/modify
+    points_msg.scale.x = msg->scale.x;
+    points_msg.scale.y = msg->scale.y;
+    points_msg.scale.z = msg->scale.z;
+    points_msg.color.a = 1.0;
+    points_msg.color.r = 0;
+    points_msg.color.g = 1;
+    points_msg.color.b = 0;
+    points_msg.lifetime = msg->lifetime;
+    points_msg.pose.position.x = p_calib.getX()+1;
+    points_msg.pose.position.y = p_calib.getY()+1;
+    points_msg.pose.position.z = p_calib.getZ();
+    points_pub.publish(points_msg);
+
+    //  ROS_INFO("NS of the point is %s and index is %d", msg->ns.c_str(), ground_points_index);
+  }
+}
+
 
 void waypointNEDICallback(const geometry_msgs::Vector3::ConstPtr& msg)
 {
@@ -171,6 +180,7 @@ void imuCallback(const sensor_msgs::Imu::ConstPtr& msg)
   {
     cv_sonar_correspondance.clear();
     flag_lamda_initialized = false;
+    FLAG_CAMERA_CALIBRATED = false;
     position_vgnd.setZero();
     ROS_INFO("Visual reasings lost : lambda and bias will be reinitialized once VSLAM is recovered ");
   }
@@ -179,9 +189,11 @@ void imuCallback(const sensor_msgs::Imu::ConstPtr& msg)
 void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg)
 {
   last_cv_stamp = ros::Time::now();
-  position_vgnd.setX(msg->pose.pose.position.x);
-  position_vgnd.setY(msg->pose.pose.position.y);
-  position_vgnd.setZ(msg->pose.pose.position.z);
+  tf::Vector3 p(msg->pose.pose.position.x,
+                msg->pose.pose.position.y,
+                msg->pose.pose.position.z);
+
+  position_vgnd = R_calib.transpose()*p;
 
   //position in the vslam inertial frame used for debugging data
   pos_msg_vgnd.header.stamp = msg->header.stamp;
@@ -211,13 +223,16 @@ void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg
   tf::quaternionTFToMsg(q_hbf_to__vgnd, cv_pose_msg.pose.orientation);
 
   z_static_states_msg.header.stamp = msg->header.stamp;
-  z_static_states_msg.vector.x = ekf_z.x_hat_kplus1_kplus1(2,0);
-  z_static_states_msg.vector.y = ekf_z.x_hat_kplus1_kplus1(3,0);
-  z_static_states_msg.vector.z = ekf_z.x_hat_kplus1_kplus1(4,0);
+//  z_static_states_msg.vector.x = ekf_z.x_hat_kplus1_kplus1(2,0);
+//  z_static_states_msg.vector.y = ekf_z.x_hat_kplus1_kplus1(3,0);
+//  z_static_states_msg.vector.z = ekf_z.x_hat_kplus1_kplus1(4,0);
+  z_static_states_msg.vector.x = ekf_z.x_hat_kplus1_kplus1(3,0)*p.getZ() + ekf_z.x_hat_kplus1_kplus1(4,0) ;
+  z_static_states_msg.vector.y = ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getZ() + ekf_z.x_hat_kplus1_kplus1(4,0) ;
+  z_static_states_msg.vector.z = ekf_z.x_hat_kplus1_kplus1(0,0);
 
   pos_pub_vgnd.publish(pos_msg_vgnd);
 
-  if(flag_lamda_initialized)
+  if(flag_lamda_initialized && FLAG_CAMERA_CALIBRATED)
     cv_pose_pub.publish(cv_pose_msg);
 
   z_static_states_pub.publish(z_static_states_msg);
@@ -298,7 +313,7 @@ void px4flowCallback(const px_comm::OpticalFlow::ConstPtr& msg)
   z_hat_msg.vector.z = z;
 
 //  z_hat_msg.vector.x = position_vgnd.getX();
-//  z_hat_msg.vector.y = position_vgnd.getZ();
+//  z_hat_msg.vector.y = position_vgnd.getY();
 //  z_hat_msg.vector.z = position_vgnd.getZ();
 
   z_hat_pub.publish(z_hat_msg);
@@ -328,6 +343,7 @@ int main(int argc, char *argv[])
   ros::Subscriber rpy_sub = n.subscribe("imu/data_raw", 100, imuCallback);
   ros::Subscriber px4flow_sub = n.subscribe("px4flow/opt_flow", 10, px4flowCallback);
   ros::Subscriber waypoint_sub = n.subscribe("waypoint_ned_i", 5, waypointNEDICallback);
+  ros::Subscriber points_sub = n.subscribe("svo/points", 10, visualizationMarkerCallback);
 
   pos_pub_vgnd = n.advertise<geometry_msgs::Vector3Stamped>("cv_pose", 100);
   acc_pub_hbf = n.advertise<geometry_msgs::Vector3Stamped>("sens_acc_hbf", 100);
@@ -336,6 +352,7 @@ int main(int argc, char *argv[])
   svo_remote_key_pub = n.advertise<std_msgs::String>("svo/remote_key", 5);
   z_static_states_pub = n.advertise<geometry_msgs::Vector3Stamped>("z_static_states", 100);
   waypoint_pub = n.advertise<geometry_msgs::Vector3>("waypoint", 5);
+  points_pub = n.advertise<visualization_msgs::Marker>("calib_points", 100);
 
 //  Queue rt;
 

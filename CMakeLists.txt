@@ -15,6 +15,9 @@ find_package(catkin REQUIRED COMPONENTS
   px_comm
   mavros
   mavros_msgs
+  visualization_msgs
+  pcl_conversions
+  pcl_ros
 )
 SET(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/CMakeModules/")
 find_package(Eigen REQUIRED)
@@ -44,7 +47,7 @@ add_library(mavros_debug
 	 )
 target_link_libraries(mavros_debug ${catkin_LIBRARIES})
 
-add_executable(pos_sens_svo src/ekf_svo.cpp src/ekf.cpp)
+add_executable(pos_sens_svo src/ekf_svo.cpp src/ekf.cpp src/sensor_fusion.cpp)
 target_link_libraries(pos_sens_svo   ${catkin_LIBRARIES} )
  
 add_executable(pos_sens_aruco src/ekf_aruco.cpp src/ekf.cpp)

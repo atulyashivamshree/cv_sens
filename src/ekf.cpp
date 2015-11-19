@@ -147,7 +147,7 @@ bool Queue::checkData()
     if(temp > 0)
     {
       std_dev = sqrt(temp);
-      std::cout<<"Last 5 seconds buffer std_dev is:"<<std_dev<<"; (Must be 0.3 for VSLAM to proceed)";
+      std::cout<<"Last 5 seconds buffer std_dev is:"<<std_dev<<"; (Must be "<<std_dev_threshold<<" for VSLAM to proceed)";
 //      std::cout<<"Buffer std_dev:"<<std_dev<<"sum_var is:"<<var_sum<<"buffer mean:"<<mean<<"; size:"<<bufferX.size()<<"; Data: ";
 //      for(int i=0;i<bufferY.size(); i++)
 //        std::cout<<bufferY[i]<<", ";
