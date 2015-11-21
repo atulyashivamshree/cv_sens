@@ -8,6 +8,40 @@
 #include "sensor_fusion.h"
 #include "ekf.h"
 
+//TODO structure code such that messages and publishers/subscrubers are present in this file and rest in sensor_fusion.cpp
+#define VISION_BREAKSIGNAL_THRESHOLD 2
+
+float tmp_count;
+float rate = 0.025;
+
+void publishSensPos(ros::Time stamp, float x, float y, float z, float psi)
+{
+  tf::Matrix3x3 R;
+  /*FIXME BUG in UAS
+   * Transformation in Eigen/Geometry near mat.eulerAngles it has been stated
+   * the returned angles are in the range [0:pi]x[-pi:pi]x[-pi:pi]
+   * In quaternion_to_rpy() present in the file uas_quaternion_utils.cpp in the folder
+   * mavros/mavros/src/lib the function mat.eulerAngles has been used to obtain YPR in
+   * the order 2,1,0
+   * So the yaw obtained is in the range is in [0 pi] which causes a bug
+   * Hence the yaw obtained inside the FCU code is in range of [0 pi] which is wrong coz
+   * -pi/2 was represented as pi/2
+   * So now the yaw angle is sent as roll angle and similarly in FCU the cv yaw is assigned
+   * to the roll angle
+   */
+  R.setRPY(psi,0,0);
+  tf::Quaternion q;
+  R.getRotation(q);
+  tf::quaternionTFToMsg(q, cv_pose_msg.pose.orientation);
+
+  cv_pose_msg.header.stamp = stamp;
+  cv_pose_msg.pose.position.x = x;
+  cv_pose_msg.pose.position.y = y;
+  cv_pose_msg.pose.position.z = z;
+
+  cv_pose_pub.publish(cv_pose_msg);
+}
+
 void statsCallback(const mavros_msgs::RCIn::ConstPtr& msg)
 {
   //TODO change this channel when configuring remote
@@ -17,6 +51,7 @@ void statsCallback(const mavros_msgs::RCIn::ConstPtr& msg)
   {
     key_msg.data = "r";
     svo_remote_key_pub.publish(key_msg);
+    resetCV();
     SVO_RESET_SENT = true;
 
   }
@@ -32,50 +67,6 @@ void statsCallback(const mavros_msgs::RCIn::ConstPtr& msg)
     SVO_RESET_SENT = false;
     SVO_INITIATED = false;
   }
-}
-
-void calibrateCamera()
-{
-  //TODO right now the calibration is suspect to outliers, implement ransac to remove them
-  printf("calibrating the camera :\n");
-  MatrixXf A = MatrixXf::Zero(GROUND_PLANE_POINTS,3);
-  MatrixXf b = MatrixXf::Zero(GROUND_PLANE_POINTS,1);
-  Matrix<float, 3, 1> X;
-
-  std::string meas_filename = "/home/atulya/data/queue.csv";
-  std::ofstream outfile_meas;
-  outfile_meas.open(meas_filename.c_str());
-
-  for(int i=0; i<GROUND_PLANE_POINTS; i++)
-  {
-    A(i,0) = ground_points[i](0);
-    A(i,1) = ground_points[i](1);
-    A(i,2) = 1;
-    b(i,0) = -ground_points[i](2);
-    outfile_meas<<A(i,0)<<","<<A(i,1)<<","<<A(i,2)<<","<<b(i,0)<<"\n";
-  }
-
-  //  std::cout<<A.jacobiSvd(ComputeThinU | ComputeThinV).solve(b);
-  X=A.colPivHouseholderQr().solve(b);
-  normal(0) = X(0,0);
-  normal(1) = X(1,0);
-  normal(2) = 1;
-  depth = -X(2,0);
-
-  float theta = atan2(normal(0), normal(2));
-  float phi = atan2(-normal(1), sqrt(pow(normal(0),2)+ pow(normal(2),2)));
-
-  R_calib.setRPY(phi,theta, 0);
-
-  printf("normal is [%f, %f, %f]", normal(0), normal(1), normal(2));
-  printf("depth is %f", depth);
-  ROS_INFO("Roll detected: %f; Pitch detected: %f", phi, theta);
-  outfile_meas.close();
-  ROS_INFO("R is \n[%f, %f, %f]\n[%f, %f, %f]\n[%f, %f, %f]",
-           R_calib.getRow(0).getX(), R_calib.getRow(0).getY(), R_calib.getRow(0).getZ(),
-           R_calib.getRow(1).getX(), R_calib.getRow(1).getY(), R_calib.getRow(1).getZ(),
-           R_calib.getRow(2).getX(), R_calib.getRow(2).getY(), R_calib.getRow(2).getZ());
-
 }
 
 void visualizationMarkerCallback(const visualization_msgs::Marker::ConstPtr& msg)
@@ -172,18 +163,6 @@ void imuCallback(const sensor_msgs::Imu::ConstPtr& msg)
 
   acc_pub_hbf.publish(acc_msg_hbf);
 
-  //check when was the last vision based reading obtained; if(greater than a threshold)then we have to reinitalize the scale and bias
-//  ros::Duration delt = msg->header.stamp - last_cv_stamp;
-  ros::Duration delt = ros::Time::now() - last_cv_stamp;
-//  std::cout<<"time difference is "<<delt.toSec()<<"\n";
-  if(delt.toSec()>5 && flag_lamda_initialized == true)
-  {
-    cv_sonar_correspondance.clear();
-    flag_lamda_initialized = false;
-    FLAG_CAMERA_CALIBRATED = false;
-    position_vgnd.setZero();
-    ROS_INFO("Visual reasings lost : lambda and bias will be reinitialized once VSLAM is recovered ");
-  }
 }
 
 void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg)
@@ -207,20 +186,12 @@ void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg
   R_b_to_VGND.getRPY(phi_v, theta_v, psi_v);
 
 //  std::cout<<"psi_v i "<<psi_v<<"\n";
-  R_HBF_to_GND.setRPY(0,0,psi_v);
+
+  R_HBF_to_GND.setRPY(0, 0, psi_v);
 
   //update the vslam algorithm according to the inertial matrix
 //  if(flag_lamda_initialized)
 //    ekf_z.updateVSLAM(position_vgnd.getZ());
-
-  //publishing pos and velocity in visual GND frame(which is at some psi_0 with respect to the GND frame) calculated to the HLP
-  cv_pose_msg.header.stamp = msg->header.stamp;
-  cv_pose_msg.pose.position.x = ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getX();
-  cv_pose_msg.pose.position.y = ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getY();
-  cv_pose_msg.pose.position.z = ekf_z.x_hat_kplus1_kplus1(0,0);
-  tf::Quaternion q_hbf_to__vgnd;
-  R_HBF_to_GND.getRotation(q_hbf_to__vgnd);
-  tf::quaternionTFToMsg(q_hbf_to__vgnd, cv_pose_msg.pose.orientation);
 
   z_static_states_msg.header.stamp = msg->header.stamp;
 //  z_static_states_msg.vector.x = ekf_z.x_hat_kplus1_kplus1(2,0);
@@ -233,37 +204,16 @@ void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg
   pos_pub_vgnd.publish(pos_msg_vgnd);
 
   if(flag_lamda_initialized && FLAG_CAMERA_CALIBRATED)
-    cv_pose_pub.publish(cv_pose_msg);
+  {
+    publishSensPos(msg->header.stamp, ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getX(),
+                                    ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getY(),
+                                    ekf_z.x_hat_kplus1_kplus1(0,0),
+                                    psi_v);
+  }
 
   z_static_states_pub.publish(z_static_states_msg);
 
 //  ROS_INFO("psi is %f", psi);
-}
-
-bool isOutlier(double z)
-{
-  rolling_q[ROLLING_FILTER_WINDOW-1] = z;
-
-  std::vector<double> sorted_q = rolling_q;
-  std::sort(sorted_q.begin(), sorted_q.end());
-
-  for(int i = 0; i<rolling_q.size()-1; i++)
-    rolling_q[i] = rolling_q[i+1];
-
-//  std::cout<<"rolled queue is\n";
-//  for(int i = 0; i<rolling_q.size()-1; i++)
-//      std::cout<<rolling_q[i]<<", ";
-//  std::cout<<"\n";
-
-  double median = sorted_q[ROLLING_FILTER_WINDOW/2];
-
-//  std::cout<<"front is "<<sorted_q[0]<<"end-2 is "<<sorted_q[ROLLING_FILTER_WINDOW-3]<<"median is" <<median<<"z is "<<z<<"diff is "<<fabs(z-median)<<"\n";
-
-  if(fabs(z-median) > 0.6)
-    return true;
-  else
-    return false;
-
 }
 
 void px4flowCallback(const px_comm::OpticalFlow::ConstPtr& msg)
@@ -320,11 +270,11 @@ void px4flowCallback(const px_comm::OpticalFlow::ConstPtr& msg)
 
   if(flag_lamda_initialized == false)
   {
-    cv_pose_msg.header.stamp = msg->header.stamp;
-    cv_pose_msg.pose.position.x = 0;
-    cv_pose_msg.pose.position.y = 0;
-    cv_pose_msg.pose.position.z = ekf_z.x_hat_kplus1_kplus1(0,0);
-    cv_pose_pub.publish(cv_pose_msg);
+    tmp_count += rate;
+    publishSensPos(msg->header.stamp, 0, 0, ekf_z.x_hat_kplus1_kplus1(0,0), psi_v);
+
+    //For Debugging
+//    publishSensPos(msg->header.stamp, 0, -3.4*sin(M_PI*tmp_count), ekf_z.x_hat_kplus1_kplus1(0,0), M_PI*5/6);
   }
 }
 
@@ -348,38 +298,27 @@ int main(int argc, char *argv[])
   pos_pub_vgnd = n.advertise<geometry_msgs::Vector3Stamped>("cv_pose", 100);
   acc_pub_hbf = n.advertise<geometry_msgs::Vector3Stamped>("sens_acc_hbf", 100);
   z_hat_pub = n.advertise<geometry_msgs::Vector3Stamped>("z_hat_ekf", 100);
-  cv_pose_pub = n.advertise<geometry_msgs::PoseStamped>("sens_pos", 100);
+  cv_pose_pub = n.advertise<geometry_msgs::PoseStamped>("sens_pose", 100);
   svo_remote_key_pub = n.advertise<std_msgs::String>("svo/remote_key", 5);
   z_static_states_pub = n.advertise<geometry_msgs::Vector3Stamped>("z_static_states", 100);
   waypoint_pub = n.advertise<geometry_msgs::Vector3>("waypoint", 5);
   points_pub = n.advertise<visualization_msgs::Marker>("calib_points", 100);
 
-//  Queue rt;
+  int rate = 50;
+  ros::Rate loop_rate(rate);
 
-  //DEBUGGING THE QUEUE
-//  for(int i=0; i<MAX_BUFFER_SIZE+5; i++)
-//  {
-//    float x,y, A=0.3;
-//    if(i<50)
-//      x = A;
-//    if(i>=50 && i<100)
-//      x = A + (i-50)/50.0*(-2*A);
-//    if(i>=100)
-//      x = -A;
-//
-//    y = 3.2*x + 2.4;
-//    rt.insertElement(x,y);
-//
-//    if(rt.checkData() == true)
-//      break;
-//  }
-//
-//  float scale, z0;
-//  if(rt.checkData() == true)
-//    rt.calculateScale(scale, z0);
+  while(ros::ok())
+  {
 
-//  std::cout<<"for data mean is "<<rt.mean<<"; std_dev: "<<rt.std_dev<<"\n";
-//  std::cout<<"calculated scale is "<<scale<<" ; "<<z0<<"\n";
+    ros::spinOnce();
 
-  ros::spin();
+    /*check when was the last vision based reading obtained; if(greater than a threshold)
+     * then we have to reinitalize the scale ,bias and plane calibration
+     */
+    ros::Duration delt = ros::Time::now() - last_cv_stamp;
+    if(delt.toSec()>VISION_BREAKSIGNAL_THRESHOLD && flag_lamda_initialized == true)
+      resetCV();
+
+    loop_rate.sleep();
+  }
 }

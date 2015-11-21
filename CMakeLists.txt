@@ -27,13 +27,13 @@ include(EnableCXX11)
 include(MavrosMavlink)
 
 include_directories(
-  include
   ${catkin_INCLUDE_DIRS}
   ${Eigen_INCLUDE_DIRS}
+  ${mavlink_INCLUDE_DIRS}
 )
 
 catkin_package(
-  INCLUDE_DIRS include
+#  INCLUDE_DIRS include
 #  LIBRARIES hello_asctec_imu
   CATKIN_DEPENDS roscpp sensor_msgs std_msgs geometry_msgs
   DEPENDS Eigen OpenCV
@@ -45,10 +45,10 @@ add_library(mavros_debug
 	 src/plugins/attitude.cpp
 	 src/plugins/local_position_ned.cpp
 	 )
-target_link_libraries(mavros_debug ${catkin_LIBRARIES})
+target_link_libraries(mavros_debug ${catkin_LIBRARIES} ${mavros_LIBRARIES})
 
 add_executable(pos_sens_svo src/ekf_svo.cpp src/ekf.cpp src/sensor_fusion.cpp)
-target_link_libraries(pos_sens_svo   ${catkin_LIBRARIES} )
+target_link_libraries(pos_sens_svo   ${catkin_LIBRARIES} ${mavros_LIBRARIES})
  
 add_executable(pos_sens_aruco src/ekf_aruco.cpp src/ekf.cpp)
 target_link_libraries(pos_sens_aruco   ${catkin_LIBRARIES} )

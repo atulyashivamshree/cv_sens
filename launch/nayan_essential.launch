@@ -1,0 +1,6 @@
+<launch>
+	<node name="px4flow" pkg="px4flow" type="px4flow_node" output="screen" respawn="true" clear_params="true">
+        	<rosparam file="$(find px4flow)/launch/px4flow_parameters.yaml"/>
+    	</node>
+	<include file="$(find bluefox2)/launch/cam_82.launch" />
+</launch>
