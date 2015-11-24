@@ -271,7 +271,10 @@ void px4flowCallback(const px_comm::OpticalFlow::ConstPtr& msg)
   if(flag_lamda_initialized == false)
   {
     tmp_count += rate;
-    publishSensPos(msg->header.stamp, 0, 0, ekf_z.x_hat_kplus1_kplus1(0,0), psi_v);
+    publishSensPos(msg->header.stamp, ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getX(),
+                                        ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getY(),
+                                        ekf_z.x_hat_kplus1_kplus1(0,0),
+                                        psi_v);
 
     //For Debugging
 //    publishSensPos(msg->header.stamp, 0, -3.4*sin(M_PI*tmp_count), ekf_z.x_hat_kplus1_kplus1(0,0), M_PI*5/6);
@@ -316,7 +319,7 @@ int main(int argc, char *argv[])
      * then we have to reinitalize the scale ,bias and plane calibration
      */
     ros::Duration delt = ros::Time::now() - last_cv_stamp;
-    if(delt.toSec()>VISION_BREAKSIGNAL_THRESHOLD && flag_lamda_initialized == true)
+    if(delt.toSec()>VISION_BREAKSIGNAL_THRESHOLD)
       resetCV();
 
     loop_rate.sleep();
