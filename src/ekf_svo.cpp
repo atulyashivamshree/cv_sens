@@ -14,7 +14,7 @@
 float tmp_count;
 float rate = 0.025;
 
-void publishSensPos(ros::Time stamp, float x, float y, float z, float psi)
+void publishSensPos(ros::Time stamp, float x, float y, float z, float psi, bool flag_cv_active)
 {
   tf::Matrix3x3 R;
   /*FIXME BUG in UAS
@@ -28,8 +28,14 @@ void publishSensPos(ros::Time stamp, float x, float y, float z, float psi)
    * -pi/2 was represented as pi/2
    * So now the yaw angle is sent as roll angle and similarly in FCU the cv yaw is assigned
    * to the roll angle
+   * WARNING: Do not send anything through this message without cross-checking
    */
-  R.setRPY(psi,0,0);
+
+  if(flag_cv_active)
+    R.setRPY(psi,0,-1);
+  else
+    R.setRPY(psi,0,-1.35);
+
   tf::Quaternion q;
   R.getRotation(q);
   tf::quaternionTFToMsg(q, cv_pose_msg.pose.orientation);
@@ -44,7 +50,7 @@ void publishSensPos(ros::Time stamp, float x, float y, float z, float psi)
 
 void statsCallback(const mavros_msgs::RCIn::ConstPtr& msg)
 {
-  //TODO change this channel when configuring remote
+  //TODO change this channel when configuring remote make this information visible somewhere
   int chnl_switch = msg->channels[5];
 
   if(chnl_switch > 2048 && SVO_INITIATED == false && SVO_RESET_SENT == false)
@@ -152,7 +158,7 @@ void imuCallback(const sensor_msgs::Imu::ConstPtr& msg)
 
   accel_hbf = R_b_to_HBF*a_b + g;           //acceleration as obtained in the horizontal body frame and in NED coordinate system
 
-  if(ekf_z.x_hat_kplus1_kplus1(0,0) > 0.3 && ekf_z.x_hat_kplus1_kplus1(0,0) < 4 )             // the absolute lower limit possible for ultrasonic sensors
+  if(ekf_z.x_hat_kplus1_kplus1(0,0) > 0.3 && ekf_z.x_hat_kplus1_kplus1(0,0) < 4.5 )             // the absolute lower limit possible for ultrasonic sensors
     ekf_z.prediction(accel_hbf.getZ());
 
 //  std::cout<<"EKF z predicted is"<<ekf_z.x_hat_kplus1_kplus1(0,0)<<"\n";
@@ -195,11 +201,11 @@ void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg
 
   z_static_states_msg.header.stamp = msg->header.stamp;
 //  z_static_states_msg.vector.x = ekf_z.x_hat_kplus1_kplus1(2,0);
-//  z_static_states_msg.vector.y = ekf_z.x_hat_kplus1_kplus1(3,0);
-//  z_static_states_msg.vector.z = ekf_z.x_hat_kplus1_kplus1(4,0);
+  z_static_states_msg.vector.y = ekf_z.x_hat_kplus1_kplus1(3,0);
+  z_static_states_msg.vector.z = ekf_z.x_hat_kplus1_kplus1(4,0);
   z_static_states_msg.vector.x = ekf_z.x_hat_kplus1_kplus1(3,0)*p.getZ() + ekf_z.x_hat_kplus1_kplus1(4,0) ;
-  z_static_states_msg.vector.y = ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getZ() + ekf_z.x_hat_kplus1_kplus1(4,0) ;
-  z_static_states_msg.vector.z = ekf_z.x_hat_kplus1_kplus1(0,0);
+//  z_static_states_msg.vector.y = ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getZ() + ekf_z.x_hat_kplus1_kplus1(4,0) ;
+//  z_static_states_msg.vector.z = ekf_z.x_hat_kplus1_kplus1(0,0);
 
   pos_pub_vgnd.publish(pos_msg_vgnd);
 
@@ -208,7 +214,8 @@ void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg
     publishSensPos(msg->header.stamp, ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getX(),
                                     ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getY(),
                                     ekf_z.x_hat_kplus1_kplus1(0,0),
-                                    psi_v);
+                                    psi_v,
+                                    true);
   }
 
   z_static_states_pub.publish(z_static_states_msg);
@@ -272,9 +279,10 @@ void px4flowCallback(const px_comm::OpticalFlow::ConstPtr& msg)
   {
     tmp_count += rate;
     publishSensPos(msg->header.stamp, ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getX(),
-                                        ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getY(),
-                                        ekf_z.x_hat_kplus1_kplus1(0,0),
-                                        psi_v);
+                                      ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getY(),
+                                      ekf_z.x_hat_kplus1_kplus1(0,0),
+                                      psi_v,
+                                      false);
 
     //For Debugging
 //    publishSensPos(msg->header.stamp, 0, -3.4*sin(M_PI*tmp_count), ekf_z.x_hat_kplus1_kplus1(0,0), M_PI*5/6);
