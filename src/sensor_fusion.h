@@ -117,8 +117,6 @@ extern float depth;
 extern std::vector<double> rolling_q;
 extern int start, end;
 
-void resetCV();
-
 void calibrateCamera();
 
 bool isOutlier(double z);

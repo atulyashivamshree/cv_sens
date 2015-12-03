@@ -67,18 +67,6 @@ float depth;
 std::vector<double> rolling_q(ROLLING_FILTER_WINDOW, DEFAULT_HEIGHT);
 int start, end;
 
-void resetCV()
-{
-  ground_points_index = 0;
-
-  cv_sonar_correspondance.clear();
-  flag_lamda_initialized = false;
-  FLAG_CAMERA_CALIBRATED = false;
-  position_vgnd.setZero();
-  ROS_INFO("Visual reasings lost : lambda and bias will be reinitialized once VSLAM is recovered ");
-}
-
-
 void calibrateCamera()
 {
   //TODO right now the calibration is suspect to outliers, implement ransac to remove them

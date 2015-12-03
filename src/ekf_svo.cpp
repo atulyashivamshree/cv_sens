@@ -10,9 +10,28 @@
 
 //TODO structure code such that messages and publishers/subscrubers are present in this file and rest in sensor_fusion.cpp
 #define VISION_BREAKSIGNAL_THRESHOLD 2
+//TODO change these variables before changing remote
+#define CHANNEL_MAX 2157
+#define CHANNEL_MIN 840
+#define CHANNEL_MID (CHANNEL_MAX + CHANNEL_MIN)/2
+float chnl_switching = 0;
+float chnl_original;
+float chnl_switching_cutoff_freq = 0.6;
+float chnl_switching_dt = 1/35.0f;
 
 float tmp_count;
 float rate = 0.025;
+
+void resetCV()
+{
+  ground_points_index = 0;
+
+  cv_sonar_correspondance.clear();
+  flag_lamda_initialized = false;
+  FLAG_CAMERA_CALIBRATED = false;
+  position_vgnd.setZero();
+  ROS_INFO("Visual reasings lost : lambda and bias will be reinitialized once VSLAM is recovered ");
+}
 
 void publishSensPos(ros::Time stamp, float x, float y, float z, float psi, bool flag_cv_active)
 {
@@ -48,31 +67,47 @@ void publishSensPos(ros::Time stamp, float x, float y, float z, float psi, bool 
   cv_pose_pub.publish(cv_pose_msg);
 }
 
+void publishDebugMessages(ros::Time stamp)
+{
+  z_static_states_msg.header.stamp = stamp;
+  z_static_states_msg.vector.x = ekf_z.x_hat_kplus1_kplus1(3,0);
+  z_static_states_msg.vector.y = ekf_z.x_hat_kplus1_kplus1(4,0);
+  z_static_states_msg.vector.z = chnl_switching;
+}
+
 void statsCallback(const mavros_msgs::RCIn::ConstPtr& msg)
 {
   //TODO change this channel when configuring remote make this information visible somewhere
-  int chnl_switch = msg->channels[5];
+  float alpha = chnl_switching_dt/(chnl_switching_dt + 1/(2*M_PI*chnl_switching_cutoff_freq));
+  chnl_original = msg->channels[5];
+  if(fabs(chnl_original) < 2500)
+  {
+    chnl_switching += (chnl_original - chnl_switching)*alpha;
+  }
 
-  if(chnl_switch > 2048 && SVO_INITIATED == false && SVO_RESET_SENT == false)
+
+  if(chnl_switching > CHANNEL_MID && SVO_INITIATED == false && SVO_RESET_SENT == false)
   {
     key_msg.data = "r";
     svo_remote_key_pub.publish(key_msg);
     resetCV();
     SVO_RESET_SENT = true;
-
   }
-  if(chnl_switch > 2048 && SVO_INITIATED == false && SVO_RESET_SENT == true)
+  if(chnl_switching > CHANNEL_MID && SVO_INITIATED == false && SVO_RESET_SENT == true)
   {
     key_msg.data = "s";
     svo_remote_key_pub.publish(key_msg);
 
     SVO_INITIATED = true;
   }
-  if(chnl_switch < 2048)
+  if(chnl_switching < CHANNEL_MID)
   {
     SVO_RESET_SENT = false;
     SVO_INITIATED = false;
   }
+
+  publishDebugMessages(msg->header.stamp);
+
 }
 
 void visualizationMarkerCallback(const visualization_msgs::Marker::ConstPtr& msg)
@@ -199,11 +234,8 @@ void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg
 //  if(flag_lamda_initialized)
 //    ekf_z.updateVSLAM(position_vgnd.getZ());
 
-  z_static_states_msg.header.stamp = msg->header.stamp;
-//  z_static_states_msg.vector.x = ekf_z.x_hat_kplus1_kplus1(2,0);
-  z_static_states_msg.vector.y = ekf_z.x_hat_kplus1_kplus1(3,0);
-  z_static_states_msg.vector.z = ekf_z.x_hat_kplus1_kplus1(4,0);
-  z_static_states_msg.vector.x = ekf_z.x_hat_kplus1_kplus1(3,0)*p.getZ() + ekf_z.x_hat_kplus1_kplus1(4,0) ;
+//  z_static_states_msg.vector.x = chnl_original;
+//  z_static_states_msg.vector.x = ekf_z.x_hat_kplus1_kplus1(3,0)*p.getZ() + ekf_z.x_hat_kplus1_kplus1(4,0) ;
 //  z_static_states_msg.vector.y = ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getZ() + ekf_z.x_hat_kplus1_kplus1(4,0) ;
 //  z_static_states_msg.vector.z = ekf_z.x_hat_kplus1_kplus1(0,0);
 
@@ -218,7 +250,7 @@ void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg
                                     true);
   }
 
-  z_static_states_pub.publish(z_static_states_msg);
+//  z_static_states_pub.publish(z_static_states_msg);
 
 //  ROS_INFO("psi is %f", psi);
 }
@@ -299,10 +331,10 @@ int main(int argc, char *argv[])
   flag_sonar_enabled = true;
   flag_lamda_initialized = false;
 
-  ros::Subscriber vslam_sub = n.subscribe("svo/pose", 10, vslamCallback);
+  ros::Subscriber vslam_sub = n.subscribe("/svo/pose", 10, vslamCallback);
   ros::Subscriber stats_sub = n.subscribe("/mavros/rc/in", 100, statsCallback);
   ros::Subscriber rpy_sub = n.subscribe("imu/data_raw", 100, imuCallback);
-  ros::Subscriber px4flow_sub = n.subscribe("px4flow/opt_flow", 10, px4flowCallback);
+  ros::Subscriber px4flow_sub = n.subscribe("/px4flow/opt_flow", 10, px4flowCallback);
   ros::Subscriber waypoint_sub = n.subscribe("waypoint_ned_i", 5, waypointNEDICallback);
   ros::Subscriber points_sub = n.subscribe("svo/points", 10, visualizationMarkerCallback);
 
@@ -329,6 +361,8 @@ int main(int argc, char *argv[])
     ros::Duration delt = ros::Time::now() - last_cv_stamp;
     if(delt.toSec()>VISION_BREAKSIGNAL_THRESHOLD)
       resetCV();
+
+    z_static_states_pub.publish(z_static_states_msg);
 
     loop_rate.sleep();
   }
