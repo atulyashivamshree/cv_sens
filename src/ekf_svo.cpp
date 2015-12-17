@@ -11,6 +11,7 @@
 //TODO structure code such that messages and publishers/subscrubers are present in this file and rest in sensor_fusion.cpp
 #define VISION_BREAKSIGNAL_THRESHOLD 2
 //TODO change these variables before changing remote
+#define KNOB_CHANNEL 6
 #define CHANNEL_MAX 2157
 #define CHANNEL_MIN 840
 #define CHANNEL_MID (CHANNEL_MAX + CHANNEL_MIN)/2
@@ -77,9 +78,8 @@ void publishDebugMessages(ros::Time stamp)
 
 void statsCallback(const mavros_msgs::RCIn::ConstPtr& msg)
 {
-  //TODO change this channel when configuring remote make this information visible somewhere
   float alpha = chnl_switching_dt/(chnl_switching_dt + 1/(2*M_PI*chnl_switching_cutoff_freq));
-  chnl_original = msg->channels[5];
+  chnl_original = msg->channels[KNOB_CHANNEL-1];
   if(fabs(chnl_original) < 2500)
   {
     chnl_switching += (chnl_original - chnl_switching)*alpha;
