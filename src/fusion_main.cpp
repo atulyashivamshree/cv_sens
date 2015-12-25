@@ -8,31 +8,8 @@
 #include "sensor_fusion.h"
 #include "ekf.h"
 
-//TODO structure code such that messages and publishers/subscrubers are present in this file and rest in sensor_fusion.cpp
-#define VISION_BREAKSIGNAL_THRESHOLD 2
-//TODO change these variables before changing remote
-#define KNOB_CHANNEL 6
-#define CHANNEL_MAX 2157
-#define CHANNEL_MIN 840
-#define CHANNEL_MID (CHANNEL_MAX + CHANNEL_MIN)/2
-float chnl_switching = 0;
-float chnl_original;
-float chnl_switching_cutoff_freq = 0.6;
-float chnl_switching_dt = 1/35.0f;
-
-float tmp_count;
-float rate = 0.025;
-
-void resetCV()
-{
-  ground_points_index = 0;
-
-  cv_sonar_correspondance.clear();
-  flag_lamda_initialized = false;
-  FLAG_CAMERA_CALIBRATED = false;
-  position_vgnd.setZero();
-  ROS_INFO("Visual reasings lost : lambda and bias will be reinitialized once VSLAM is recovered ");
-}
+//Temporary variables to check output rate of the mavros publisher
+//float tmp, rate= 0.025;
 
 void publishSensPos(ros::Time stamp, float x, float y, float z, float psi, bool flag_cv_active)
 {
@@ -52,9 +29,9 @@ void publishSensPos(ros::Time stamp, float x, float y, float z, float psi, bool 
    */
 
   if(flag_cv_active)
-    R.setRPY(psi,0,-1);
+    R.setRPY(psi,0,-1);                 //Hard coded similar thing on HLP
   else
-    R.setRPY(psi,0,-1.35);
+    R.setRPY(psi,0,-1.35);              //Hard coded similar thing on HLP
 
   tf::Quaternion q;
   R.getRotation(q);
@@ -80,11 +57,11 @@ void statsCallback(const mavros_msgs::RCIn::ConstPtr& msg)
 {
   float alpha = chnl_switching_dt/(chnl_switching_dt + 1/(2*M_PI*chnl_switching_cutoff_freq));
   chnl_original = msg->channels[KNOB_CHANNEL-1];
-  if(fabs(chnl_original) < 2500)
+
+  if(fabs(chnl_original) < 2500 && fabs(chnl_original) > 600)
   {
     chnl_switching += (chnl_original - chnl_switching)*alpha;
   }
-
 
   if(chnl_switching > CHANNEL_MID && SVO_INITIATED == false && SVO_RESET_SENT == false)
   {
@@ -159,17 +136,6 @@ void visualizationMarkerCallback(const visualization_msgs::Marker::ConstPtr& msg
   }
 }
 
-
-void waypointNEDICallback(const geometry_msgs::Vector3::ConstPtr& msg)
-{
-  tf::Vector3 wp_nedi(msg->x, msg->y, msg->z);
-  //converting from nedi to nedb
-  tf::Vector3 wp_nedb =  R_vb_vgnd_t*wp_nedi;
-
-  tf::vector3TFToMsg(wp_nedb, waypoint_msg_nedb);
-  waypoint_pub.publish(waypoint_msg_nedb);
-}
-
 void imuCallback(const sensor_msgs::Imu::ConstPtr& msg)
 {
   geometry_msgs::Quaternion q_ = msg->orientation;
@@ -230,14 +196,9 @@ void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg
 
   R_HBF_to_GND.setRPY(0, 0, psi_v);
 
-  //update the vslam algorithm according to the inertial matrix
+  //update the vslam algorithm according to the inertia matrix
 //  if(flag_lamda_initialized)
 //    ekf_z.updateVSLAM(position_vgnd.getZ());
-
-//  z_static_states_msg.vector.x = chnl_original;
-//  z_static_states_msg.vector.x = ekf_z.x_hat_kplus1_kplus1(3,0)*p.getZ() + ekf_z.x_hat_kplus1_kplus1(4,0) ;
-//  z_static_states_msg.vector.y = ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getZ() + ekf_z.x_hat_kplus1_kplus1(4,0) ;
-//  z_static_states_msg.vector.z = ekf_z.x_hat_kplus1_kplus1(0,0);
 
   pos_pub_vgnd.publish(pos_msg_vgnd);
 
@@ -249,67 +210,23 @@ void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg
                                     psi_v,
                                     true);
   }
-
-//  z_static_states_pub.publish(z_static_states_msg);
-
-//  ROS_INFO("psi is %f", psi);
 }
 
 void px4flowCallback(const px_comm::OpticalFlow::ConstPtr& msg)
 {
-  double z = msg->ground_distance;
+  float z = msg->ground_distance;
 
-  if(isOutlier(z))
-  {
-    rolling_q[ROLLING_FILTER_WINDOW-2] = ekf_z.x_hat_kplus1_kplus1(0,0);
-//    std::cout<<"outlier detected";
-  }
-  else
-  {
-    if(flag_sonar_enabled)
-    {
-      rolling_q[ROLLING_FILTER_WINDOW-2] = z;
-      ekf_z.updateUltrasonic(z);
-      //finding out the scale and bias factor for the vision algorithm
-      if(flag_lamda_initialized == false)
-        {
-          if(position_vgnd.getZ() != 0)
-          {
-            cv_sonar_correspondance.insertElement(position_vgnd.getZ(), z);
-            if(cv_sonar_correspondance.checkData() == true)
-            {
-              float scale, z0;
-              cv_sonar_correspondance.calculateScale(scale, z0);
-              ekf_z.updateScaleBiasSVO(scale, z0);
-              ROS_INFO("Scale: %f and bias:%f for VSLAM initialised", scale, z0);
-              flag_lamda_initialized = true;
-            }
-          }
-        }
-    }
-    else
-      rolling_q[ROLLING_FILTER_WINDOW-2] = ekf_z.x_hat_kplus1_kplus1(0,0);
-  }
-
+  processSonarData(z);
 
   z_hat_msg.header.stamp = msg->header.stamp;
   z_hat_msg.vector.x = ekf_z.x_hat_kplus1_kplus1(0,0);
-//  z_hat_msg.vector.x = z_filter;
-//  ROS_INFO("Scale: %f and bias:%f for VSLAM initialised", ekf_z.x_hat_kplus1_kplus1(3,0), ekf_z.x_hat_kplus1_kplus1(4,0));
   z_hat_msg.vector.y = ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getZ() + ekf_z.x_hat_kplus1_kplus1(4,0) ;
-//  z_hat_msg.vector.z = ekf_z.x_hat_kplus1_kplus1(2,0);
-
   z_hat_msg.vector.z = z;
-
-//  z_hat_msg.vector.x = position_vgnd.getX();
-//  z_hat_msg.vector.y = position_vgnd.getY();
-//  z_hat_msg.vector.z = position_vgnd.getZ();
-
   z_hat_pub.publish(z_hat_msg);
 
   if(flag_lamda_initialized == false)
   {
-    tmp_count += rate;
+//    tmp_count += rate;
     publishSensPos(msg->header.stamp, ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getX(),
                                       ekf_z.x_hat_kplus1_kplus1(3,0)*position_vgnd.getY(),
                                       ekf_z.x_hat_kplus1_kplus1(0,0),
@@ -335,7 +252,6 @@ int main(int argc, char *argv[])
   ros::Subscriber stats_sub = n.subscribe("/mavros/rc/in", 100, statsCallback);
   ros::Subscriber rpy_sub = n.subscribe("imu/data_raw", 100, imuCallback);
   ros::Subscriber px4flow_sub = n.subscribe("/px4flow/opt_flow", 10, px4flowCallback);
-  ros::Subscriber waypoint_sub = n.subscribe("waypoint_ned_i", 5, waypointNEDICallback);
   ros::Subscriber points_sub = n.subscribe("svo/points", 10, visualizationMarkerCallback);
 
   pos_pub_vgnd = n.advertise<geometry_msgs::Vector3Stamped>("cv_pose", 100);
@@ -344,7 +260,6 @@ int main(int argc, char *argv[])
   cv_pose_pub = n.advertise<geometry_msgs::PoseStamped>("sens_pose", 100);
   svo_remote_key_pub = n.advertise<std_msgs::String>("svo/remote_key", 5);
   z_static_states_pub = n.advertise<geometry_msgs::Vector3Stamped>("z_static_states", 100);
-  waypoint_pub = n.advertise<geometry_msgs::Vector3>("waypoint", 5);
   points_pub = n.advertise<visualization_msgs::Marker>("calib_points", 100);
 
   int rate = 50;

@@ -8,8 +8,15 @@
 #include "sensor_fusion.h"
 
 double phi, theta, psi;
-bool flag_sonar_enabled;
-bool flag_lamda_initialized;
+bool flag_sonar_enabled = true;
+bool flag_sonar_initialized = false;
+bool flag_lamda_initialized = false;
+int sonar_lost_count = 0;
+
+float chnl_switching = 0;
+float chnl_original;
+float chnl_switching_cutoff_freq = 0.6;
+float chnl_switching_dt = 1/35.0f;
 
 ros::Time last_cv_stamp;
 
@@ -113,6 +120,9 @@ void calibrateCamera()
 
 bool isOutlier(double z)
 {
+  if(z == 0)
+    return true;
+
   rolling_q[ROLLING_FILTER_WINDOW-1] = z;
 
   std::vector<double> sorted_q = rolling_q;
@@ -134,5 +144,73 @@ bool isOutlier(double z)
     return true;
   else
     return false;
+
+}
+
+void initializeSONAR(float z)
+{
+  ekf_z.initializeState(z);
+}
+
+void resetCV()
+{
+  ground_points_index = 0;
+
+  cv_sonar_correspondance.clear();
+  flag_lamda_initialized = false;
+  FLAG_CAMERA_CALIBRATED = false;
+  position_vgnd.setZero();
+
+  ROS_INFO("Visual reasings lost : lambda and bias will be reinitialized once VSLAM is recovered ");
+}
+
+void processSonarData(float z)
+{
+  if(flag_sonar_initialized == false)
+  {
+    if(z!=0)
+    {
+      initializeSONAR(z);
+      flag_sonar_initialized = true;
+    }
+  }
+
+  if(isOutlier(z))
+  {
+    rolling_q[ROLLING_FILTER_WINDOW-2] = ekf_z.x_hat_kplus1_kplus1(0,0);
+    sonar_lost_count++;
+    if(sonar_lost_count >= SONAR_LOSS_COUNT_THRESHOLD)
+    {
+      flag_sonar_initialized = false;
+      sonar_lost_count = 0;
+    }
+//    std::cout<<"outlier detected";
+  }
+  else
+  {
+    if(flag_sonar_enabled)
+    {
+      rolling_q[ROLLING_FILTER_WINDOW-2] = z;
+      ekf_z.updateUltrasonic(z);
+      //finding out the scale and bias factor for the vision algorithm
+      if(flag_lamda_initialized == false)               //TODO add a check to insert into queue only if timestamps are close
+      {
+        if(position_vgnd.getZ() != 0)
+        {
+          cv_sonar_correspondance.insertElement(position_vgnd.getZ(), z);
+          if(cv_sonar_correspondance.checkData() == true)
+          {
+            float scale, z0;
+            cv_sonar_correspondance.calculateScale(scale, z0);
+            ekf_z.updateScaleBiasSVO(scale, z0);
+            ROS_INFO("Scale: %f and bias:%f for VSLAM initialised", scale, z0);
+            flag_lamda_initialized = true;
+          }
+        }
+      }
+    }
+    else
+      rolling_q[ROLLING_FILTER_WINDOW-2] = ekf_z.x_hat_kplus1_kplus1(0,0);
+  }
 
 }

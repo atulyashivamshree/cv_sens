@@ -51,6 +51,9 @@ public:
   //perform the prediction step of the imu
   void prediction(double u);
 
+  //initialize the state on the basis of a measurement value
+  void initializeState(float z);
+
   //perform the update step of the VSLAM
   void updateVSLAM(double y);
 

@@ -17,10 +17,6 @@
 
 #include <visualization_msgs/Marker.h>
 
-#include <pcl_conversions/pcl_conversions.h>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
-
 #include <px_comm/OpticalFlow.h>
 #include <mavros_msgs/RCIn.h>
 
@@ -36,14 +32,41 @@
 #define DATA_DELAY 6
 #define SONAR_DELTA_READING_MAX 0.4
 
+#define VISION_BREAKSIGNAL_THRESHOLD 2
+#define SONAR_LOSS_COUNT_THRESHOLD 100
+
+//----------INITIAL CONFIGURATION---------------
+#define KNOB_CHANNEL 6
+#define CHANNEL_MAX 2157
+#define CHANNEL_MIN 840
+//==============================================
+
+//All the channel variables used for sending reset and other signals
+#define CHANNEL_MID (CHANNEL_MAX + CHANNEL_MIN)/2
+extern float chnl_switching;
+extern float chnl_original;
+extern float chnl_switching_cutoff_freq;
+extern float chnl_switching_dt;
+
+//The calibration algorithm takes in 100 points that it has obtained from the visual slam algorithm and rotates them such that they are
+//horizontal. This rotation is called the camera rotation angle and is used because it is assumed that the ground is perfectly horizontal
+//It has been employed here because the camera though static with respect to the quad is not always horizontal and there may be tilt errors
+//while being powered up
 #define GROUND_PLANE_POINTS 100
 
 //current orientation
 extern double phi, theta, psi;
 
-//initializing using the initial values
+//initializing the flag variables
 extern bool flag_sonar_enabled;
+extern bool flag_sonar_initialized;
 extern bool flag_lamda_initialized;
+extern int sonar_lost_count;
+
+// bool for setting the home
+extern bool SVO_INITIATED;
+extern bool SVO_RESET_SENT;
+extern bool FLAG_CAMERA_CALIBRATED;
 
 //timestamp of the last visual sensor
 extern ros::Time last_cv_stamp;
@@ -97,11 +120,6 @@ extern ros::Publisher waypoint_pub;
 extern visualization_msgs::Marker points_msg;
 extern ros::Publisher points_pub;
 
-// bool for setting the home
-extern bool SVO_INITIATED;
-extern bool SVO_RESET_SENT;
-extern bool FLAG_CAMERA_CALIBRATED;
-
 // kalman observer for x and y
 extern IMU_CV_EKF ekf_z;
 extern geometry_msgs::Vector3Stamped z_static_states_msg;
@@ -120,5 +138,11 @@ extern int start, end;
 void calibrateCamera();
 
 bool isOutlier(double z);
+
+void initializeSONAR(float z);
+
+void processSonarData(float z);
+
+void resetCV();
 
 #endif /* SENSOR_FUSION_H_ */

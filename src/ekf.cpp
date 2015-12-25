@@ -52,6 +52,23 @@ IMU_CV_EKF::IMU_CV_EKF(double del_t)
 
 }
 
+void IMU_CV_EKF::initializeState(float z)
+{
+    x_hat_k_k << z,0,-0.2, 1, 1;
+
+    P_k_k = MatrixXd::Identity(5,5);
+    P_k_k(0,0) = 2;
+    P_k_k(2,2) = 0.3;
+    P_k_k(3,3) = 4;
+    P_k_k(4,4) = 0.4;
+
+    x_hat_kplus1_k = x_hat_k_k;
+    P_kplus1_k = P_k_k;
+    x_hat_kplus1_kplus1 = x_hat_k_k;
+    P_kplus1_kplus1 = P_k_k;
+
+}
+
 void IMU_CV_EKF::prediction(double u)
 {
   x_hat_k_k = x_hat_kplus1_kplus1;

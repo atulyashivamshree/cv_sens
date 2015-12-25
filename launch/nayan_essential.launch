@@ -1,6 +1,12 @@
 <launch>
+
+	<arg name="serial_port" default="/dev/ttyACM0" />
+	<arg name="baudrate" default="57600" />
+
 	<node name="px4flow" pkg="px4flow" type="px4flow_node" output="screen" respawn="true" clear_params="true">
-        	<rosparam file="$(find px4flow)/launch/px4flow_parameters.yaml"/>
+        	<param name="serial_port" value="$(arg serial_port)" />
+		<param name="baudrate" value="$(arg baudrate)" />
     	</node>
+
 	<include file="$(find cv_sens)/launch/cam_82.launch" />
 </launch>
