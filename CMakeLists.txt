@@ -29,8 +29,6 @@ include_directories(
 )
 
 catkin_package(
-#  INCLUDE_DIRS include
-#  LIBRARIES hello_asctec_imu
   CATKIN_DEPENDS roscpp sensor_msgs std_msgs geometry_msgs
   DEPENDS Eigen OpenCV
 )
