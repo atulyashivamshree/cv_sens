@@ -7,74 +7,175 @@
 
 #include "sensor_fusion.h"
 
-double phi, theta, psi;
-bool flag_sonar_enabled = true;
-bool flag_sonar_initialized = false;
-bool flag_lamda_initialized = false;
-int sonar_lost_count = 0;
+Queue::Queue(float threshold, int delay_count, int max_buffer)
+{
+  std_dev_threshold = threshold;
+  data_delay = delay_count;
+  max_buffer_size = max_buffer;
+}
 
-float chnl_switching = 0;
-float chnl_original;
-float chnl_switching_cutoff_freq = 0.6;
-float chnl_switching_dt = 1/35.0f;
 
-ros::Time last_cv_stamp;
+void Queue::insertElement(float valx, float valy)
+{
+  if(bufferX.size() < max_buffer_size)
+  {
+    bufferX.push_back(valx);
+    bufferY.push_back(valy);
+    var_sum += pow(valy,2);
+    sum += valy;
+  }
 
-Queue cv_sonar_correspondance(STD_DEV_THRESHOLD, DATA_DELAY, MAX_BUFFER_SIZE);
+  else
+  {
+    var_sum -= pow(bufferY[0],2);
+    sum -= bufferY[0];
 
-tf::Vector3 position_vgnd;
+    for(int i=0; i<max_buffer_size-1; i++)
+    {
+      bufferX[i] = bufferX[i+1];
+      bufferY[i] = bufferY[i+1];
+    }
 
-tf::Matrix3x3 R_HBF_to_GND;
-tf::Matrix3x3 R_b_to_HBF;
-tf::Matrix3x3 R_b_to_GND;
-tf::Matrix3x3 R_b_to_VGND;
-tf::Matrix3x3 R_vb_vgnd_t;
-tf::Matrix3x3 R_calib;
-double phi_v, theta_v, psi_v;
+    bufferX[max_buffer_size-1] = valx;
+    bufferY[max_buffer_size-1] = valy;
 
-tf::Vector3 accel_hbf;
+    var_sum += pow(valy,2);
+    sum += valy;
+  }
+}
 
-geometry_msgs::Vector3Stamped pos_msg_vgnd;
-ros::Publisher pos_pub_vgnd;
+bool Queue::checkData()
+{
+  if(bufferX.size()==max_buffer_size)
+  {
+    mean = sum/max_buffer_size;
+    float temp = var_sum/max_buffer_size - pow(mean,2);
+    if(temp > 0)
+    {
+      std_dev = sqrt(temp);
+      std::cout<<"Last 5 seconds buffer std_dev is:"<<std_dev<<"; (Must be "<<std_dev_threshold<<" for VSLAM to proceed)";
+//      std::cout<<"Buffer std_dev:"<<std_dev<<"sum_var is:"<<var_sum<<"buffer mean:"<<mean<<"; size:"<<bufferX.size()<<"; Data: ";
+//      for(int i=0;i<bufferY.size(); i++)
+//        std::cout<<bufferY[i]<<", ";
+      std::cout<<"\n";
+      if(std_dev > std_dev_threshold)
+        return true;
+      else
+        return false;
+    }
+    else
+    {
+      bufferX.clear();
+      bufferY.clear();
+      return false;
+    }
+  }
+  else
+    return false;
+}
 
-geometry_msgs::Vector3Stamped pos_msg_vb;
-ros::Publisher pos_pub_vb;
+void Queue::calculateScale(float &scale, float &z_0)
+{
+//  Matrix<float, max_buffer_size-data_delay, 2> A;
+//  Matrix<float, max_buffer_size-data_delay, 1> b;
+  MatrixXf A = MatrixXf::Zero(max_buffer_size-data_delay,2);
+  MatrixXf b = MatrixXf::Zero(max_buffer_size-data_delay,1);
+  Matrix<float, 2, 1> X;
 
-geometry_msgs::Vector3Stamped acc_msg_hbf;
-ros::Publisher acc_pub_hbf;
+//  std::string meas_filename = "../queue.csv";
+//    std::ofstream outfile_meas;
+//    outfile_meas.open(meas_filename.c_str());
 
-geometry_msgs::Vector3Stamped z_hat_msg;
-ros::Publisher z_hat_pub;
+  if(checkData() == false)
+    return;
 
-geometry_msgs::PoseStamped cv_pose_msg;
-ros::Publisher cv_pose_pub;
+  for(int i=0; i<max_buffer_size-data_delay; i++)
+  {
+    A(i,0) = bufferX[i];
+    A(i,1) = 1;
+    b(i,0) = bufferY[(i+data_delay)%max_buffer_size];
+//    outfile_meas<<bufferX[i]<<","<<b(i,0)<<"\n";
+  }
 
-std_msgs::String key_msg;
-ros::Publisher svo_remote_key_pub;
+//  std::cout<<A.jacobiSvd(ComputeThinU | ComputeThinV).solve(b);
+  X=A.colPivHouseholderQr().solve(b);
+  scale = X(0,0);
+  z_0 = X(1,0);
+//  outfile_meas.close();
+//  MatrixXf A = MatrixXf::Random(3, 2);
+//  VectorXf b = VectorXf::Random(3);
+//  std::cout << "The solution using the QR decomposition is:\n"
+//       << A.colPivHouseholderQr().solve(b) << std::endl;
+//  std::cout<<X;
 
-geometry_msgs::Vector3 waypoint_msg_nedb;
-ros::Publisher waypoint_pub;
+}
+void Queue::clear()
+{
+  bufferX.clear();
+  bufferY.clear();
+  var_sum = 0;
+  sum = 0;
+  mean = 0;
+  std_dev =0;
+}
 
-visualization_msgs::Marker points_msg;
-ros::Publisher points_pub;
+SensorSonar::SensorSonar()
+{
+  flag_sonar_enabled = true;
+  flag_sonar_initialized = false;
+  flag_sonar_diverged = false;
+  flag_sonar_lost = false;
 
-bool SVO_INITIATED = false;
-bool SVO_RESET_SENT = false;
-bool FLAG_CAMERA_CALIBRATED = false;
+  depth = 0;
+  sonar_diverged_time = 0;
+}
 
-IMU_CV_EKF ekf_z(1/IMU_FREQUENCY);
-geometry_msgs::Vector3Stamped z_static_states_msg;
-ros::Publisher z_static_states_pub;
+void SensorSonar::initialize(float z, ros::Time stamp)
+{
+  flag_sonar_initialized = true;
+  last_sonar_stamp = stamp;
+  depth = z;
+}
 
-std::vector<Vector3f> ground_points(GROUND_PLANE_POINTS);
-int ground_points_index;
-Vector3f normal;
-float depth;
+bool SensorSonar::isGlitching(float z)
+{
+  bool all_ok = true;
 
-std::vector<double> rolling_q(ROLLING_FILTER_WINDOW, DEFAULT_HEIGHT);
-int start, end;
+  if(z < 0.3 || z > 4.5)
+    all_ok = false;
 
-void calibrateCamera()
+  return !all_ok;
+}
+
+void SensorSonar::processData(float z, ros::Time stamp)
+{
+  depth = z;
+}
+
+SensorCV::SensorCV():ground_points(GROUND_PLANE_POINTS)
+{
+  flag_VSLAM_initiated = false;
+  flag_VSLAM_reset_sent = false;
+  flag_camera_rotation_corrected = false;
+  flag_VSLAM_lost = false;
+
+  position_vgnd = tf::Vector3(0.0f,0.0f,0.0f);
+  phi_v = 0.0f;
+  theta_v = 0.0f;
+  psi_v = 0.0f;
+
+  ground_points_index = 0;
+
+  R_calib.setRPY(0.0f, 0.0f, 0.0f);
+}
+
+void SensorCV::resetCV()
+{
+  flag_camera_rotation_corrected = false;
+  ground_points_index = 0;
+}
+
+void SensorCV::correctCameraRotation()
 {
   //TODO right now the calibration is suspect to outliers, implement ransac to remove them
   printf("calibrating the camera :\n");
@@ -118,7 +219,28 @@ void calibrateCamera()
 
 }
 
-bool isOutlier(double z)
+SensorFusion::SensorFusion():ekf_z(1/IMU_FREQUENCY),
+                            cv_sonar_correspondance(STD_DEV_THRESHOLD, DATA_DELAY, MAX_BUFFER_SIZE)
+{
+  position = tf::Vector3(0.0f,0.0f,0.0f);
+  phi = 0.0f;
+  theta = 0.0f;
+  psi = 0.0f;
+
+  flag_lamda_initialized = false;
+
+  R_HBF_to_GND.setRPY(0.0f, 0.0f, 0.0f);
+  R_b_to_GND.setRPY(0.0f, 0.0f, 0.0f);
+  R_b_to_HBF.setRPY(0.0f, 0.0f, 0.0f);
+  R_b_to_VGND.setRPY(0.0f, 0.0f, 0.0f);
+
+  sensor_health.baro = UNINITIALIZED;
+  sensor_health.cv = UNINITIALIZED;
+  sensor_health.imu = UNINITIALIZED;
+  sensor_health.sonar = UNINITIALIZED;
+}
+
+bool SensorFusion::isSonarDataOutlier(double z)
 {
   if(z == 0)
     return true;
@@ -147,57 +269,112 @@ bool isOutlier(double z)
 
 }
 
-void initializeSONAR(float z)
+void SensorFusion::initializeSonar(double z, ros::Time stamp)
 {
+  sonar.initialize(z, stamp);
   ekf_z.initializeState(z);
 }
 
-void resetCV()
+void SensorFusion::updateIMUData(const sensor_msgs::Imu::ConstPtr& msg)
 {
-  ground_points_index = 0;
+  geometry_msgs::Quaternion q_ = msg->orientation;
+  tf::Quaternion q;
+  tf::quaternionMsgToTF(q_, q);
 
+  R_b_to_GND.setRotation(q);
+
+  double psi_temp;
+
+  R_b_to_GND.getRPY(phi, theta, psi_temp);
+
+//  R_HBF_to_GND.setRPY(0, 0, psi);
+  R_b_to_HBF.setRPY(phi, theta, 0);
+
+  tf::Vector3 a_b(msg->linear_acceleration.x,
+                  msg->linear_acceleration.y,
+                  msg->linear_acceleration.z);
+
+  tf::Vector3 g(0,0,-GRAVITY_MSS);      //the gravity vector
+
+  accel_hbf = R_b_to_HBF*a_b + g;       //acceleration as obtained in the horizontal body frame and in NED coordinate system
+
+  //IMU based prediction will work only as long as estimate is within acceptable limits of SONAR
+  if(ekf_z.x_hat_kplus1_kplus1(0,0) > 0.3 && ekf_z.x_hat_kplus1_kplus1(0,0) < 4.5 )             // the absolute lower limit possible for ultrasonic sensors
+    ekf_z.prediction(accel_hbf.getZ());
+
+//  std::cout<<"EKF z predicted is"<<ekf_z.x_hat_kplus1_kplus1(0,0)<<"\n";
+
+  tf::vector3TFToMsg(accel_hbf, acc_msg_hbf.vector);
+  acc_msg_hbf.vector.x = z_hat_msg.vector.z;
+  acc_msg_hbf.header.stamp = msg->header.stamp;
+
+  acc_pub_hbf.publish(acc_msg_hbf);
+}
+
+bool SensorFusion::isVSLAMEstimationHealthy()
+{
+  bool all_ok = true;
+  if(flag_lamda_initialized == false)
+    all_ok = false;
+
+  if(cv_slam.flag_camera_rotation_corrected == false)
+    all_ok = false;
+
+  return (!all_ok);
+}
+
+void SensorFusion::resetVSLAM()
+{
   cv_sonar_correspondance.clear();
   flag_lamda_initialized = false;
-  FLAG_CAMERA_CALIBRATED = false;
-  position_vgnd.setZero();
+  cv_slam.resetCV();
+
+  position.setZero();
+  phi = 0;
+  theta = 0;
+  psi = 0;
 
   ROS_INFO("Visual reasings lost : lambda and bias will be reinitialized once VSLAM is recovered ");
 }
 
-void processSonarData(float z)
+void SensorFusion::updateSonarData(double z, ros::Time stamp)
 {
-  if(flag_sonar_initialized == false)
+  //If sonar has not been initialized
+  if(sonar.flag_sonar_initialized == false)
   {
     if(z!=0)
     {
-      initializeSONAR(z);
-      flag_sonar_initialized = true;
+      sonar.initialize(z, stamp);
     }
   }
 
-  if(isOutlier(z))
+  //Check if sonar data is an outlier
+  if(isSonarDataOutlier(z))
   {
     rolling_q[ROLLING_FILTER_WINDOW-2] = ekf_z.x_hat_kplus1_kplus1(0,0);
-    sonar_lost_count++;
-    if(sonar_lost_count >= SONAR_LOSS_COUNT_THRESHOLD)
+    ros::Duration delt = stamp - sonar.last_sonar_stamp;
+    sonar.sonar_diverged_time = delt.toSec();
+
+    if(sonar.sonar_diverged_time >= SONAR_LOSS_TIME_THRESHOLD)
     {
-      flag_sonar_initialized = false;
-      sonar_lost_count = 0;
+      sonar.flag_sonar_initialized = false;
+      sonar.flag_sonar_diverged = true;
+      sonar.sonar_diverged_time = 0.0f;
     }
 //    std::cout<<"outlier detected";
   }
   else
   {
-    if(flag_sonar_enabled)
+    if(sonar.flag_sonar_enabled)
     {
       rolling_q[ROLLING_FILTER_WINDOW-2] = z;
       ekf_z.updateUltrasonic(z);
       //finding out the scale and bias factor for the vision algorithm
       if(flag_lamda_initialized == false)               //TODO add a check to insert into queue only if timestamps are close
       {
-        if(position_vgnd.getZ() != 0)
+        if(cv_slam.position_vgnd.getZ() != 0)
         {
-          cv_sonar_correspondance.insertElement(position_vgnd.getZ(), z);
+          cv_sonar_correspondance.insertElement(cv_slam.position_vgnd.getZ(), z);
           if(cv_sonar_correspondance.checkData() == true)
           {
             float scale, z0;
@@ -213,4 +390,126 @@ void processSonarData(float z)
       rolling_q[ROLLING_FILTER_WINDOW-2] = ekf_z.x_hat_kplus1_kplus1(0,0);
   }
 
+  //set z coordinate of the estimated state to the ekf computed state
+  position.setZ(ekf_z.x_hat_kplus1_kplus1(0,0));
+}
+
+void SensorFusion::updateVSLAMData(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg)
+{
+  cv_slam.last_cv_stamp = msg->header.stamp;
+  tf::Vector3 p(msg->pose.pose.position.x,
+                msg->pose.pose.position.y,
+                msg->pose.pose.position.z);
+
+  //correct the position according to the corrected camera rotaion matrix
+  cv_slam.position_vgnd = cv_slam.R_calib.transpose()*p;
+
+  //Read the values of euler angles from vslam
+  tf::Quaternion q;
+  tf::quaternionMsgToTF(msg->pose.pose.orientation, q);
+  R_b_to_VGND.setRotation(q);
+  R_b_to_VGND.getRPY(cv_slam.phi_v, cv_slam.theta_v, cv_slam.psi_v);
+
+//  std::cout<<"psi_v i "<<psi_v<<"\n";
+  R_HBF_to_GND.setRPY(0, 0, cv_slam.psi_v);
+
+  //update the vslam algorithm according to the inertia matrix
+//  if(flag_lamda_initialized)
+//    ekf_z.updateVSLAM(position_vgnd.getZ());
+  pos_pub_vgnd.publish(pos_msg_vgnd);
+
+  //assign final psi and position according to the camera data
+  psi = cv_slam.psi_v;
+  position.setX(ekf_z.x_hat_kplus1_kplus1(3,0)*cv_slam.position_vgnd.getX());
+  position.setY(ekf_z.x_hat_kplus1_kplus1(3,0)*cv_slam.position_vgnd.getY());
+}
+
+void SensorFusion::updateVSLAM_MapPointsRotationCorrection(const visualization_msgs::Marker::ConstPtr& msg)
+{
+  if(msg->ns.compare("pts") == 0 && cv_slam.flag_camera_rotation_corrected == false)
+   {
+     if(msg->pose.position.z == 0)
+       return;
+     cv_slam.ground_points[cv_slam.ground_points_index](0) = msg->pose.position.x;
+     cv_slam.ground_points[cv_slam.ground_points_index](1) = msg->pose.position.y;
+     cv_slam.ground_points[cv_slam.ground_points_index](2) = msg->pose.position.z;
+     cv_slam.ground_points_index++;
+
+     //if sufficient number of points have been acquired correct the map
+     if(cv_slam.ground_points_index == GROUND_PLANE_POINTS)
+     {
+       cv_slam.correctCameraRotation();
+       cv_slam.flag_camera_rotation_corrected = true;
+     }
+   }
+
+  // if rotation has been corrected publish new points in the rotation corrected frame
+   if(cv_slam.flag_camera_rotation_corrected == true)
+   {
+     tf::Vector3 p(msg->pose.position.x,
+                   msg->pose.position.y,
+                   msg->pose.position.z);
+
+     tf::Vector3 p_calib = cv_slam.R_calib.transpose()*p;
+   //  tf::Vector3 p_calib = p;
+
+     map_points_msg.header.frame_id = "/world";
+     map_points_msg.header.stamp = msg->header.stamp;
+     map_points_msg.ns = "calib_"+msg->ns;
+     map_points_msg.id = msg->id;
+     map_points_msg.type = visualization_msgs::Marker::CUBE;
+     map_points_msg.action = msg->action; // 0 = add/modify
+     map_points_msg.scale.x = msg->scale.x;
+     map_points_msg.scale.y = msg->scale.y;
+     map_points_msg.scale.z = msg->scale.z;
+     map_points_msg.color.a = 1.0;
+     map_points_msg.color.r = 0;
+     map_points_msg.color.g = 1;
+     map_points_msg.color.b = 0;
+     map_points_msg.lifetime = msg->lifetime;
+     map_points_msg.pose.position.x = p_calib.getX()+1;
+     map_points_msg.pose.position.y = p_calib.getY()+1;
+     map_points_msg.pose.position.z = p_calib.getZ();
+     map_points_pub.publish(map_points_msg);
+
+     //  ROS_INFO("NS of the point is %s and index is %d", msg->ns.c_str(), ground_points_index);
+   }
+}
+
+//Monitors the health of all sensors
+void SensorFusion::monitorSensorHealth()
+{
+  /*check when was the last vision based reading obtained; if(greater than a threshold)
+       * then we have to reinitalize the scale ,bias and plane calibration
+       */
+  ros::Duration delt = ros::Time::now() - cv_slam.last_cv_stamp;
+  if(delt.toSec()>VISION_BREAKSIGNAL_THRESHOLD)
+  {
+    cv_slam.resetCV();
+    sensor_health.cv = LOST;
+  }
+}
+
+//Function for publishing some standard debug messages
+void SensorFusion::publishDebugMessages(ros::Time stamp)
+{
+  z_static_states_msg.header.stamp = stamp;
+  z_static_states_msg.vector.x = ekf_z.x_hat_kplus1_kplus1(3,0);
+  z_static_states_msg.vector.y = ekf_z.x_hat_kplus1_kplus1(4,0);
+  z_static_states_msg.vector.z = ekf_z.x_hat_kplus1_kplus1(5,0);
+
+  z_hat_msg.header.stamp = stamp;
+  z_hat_msg.vector.x = ekf_z.x_hat_kplus1_kplus1(0,0);
+  z_hat_msg.vector.y = ekf_z.x_hat_kplus1_kplus1(3,0)*cv_slam.position_vgnd.getZ() + ekf_z.x_hat_kplus1_kplus1(4,0);
+  z_hat_msg.vector.z = sonar.depth;
+
+  //position in the vslam inertial frame used for debugging data
+  pos_msg_vgnd.header.stamp = stamp;
+  pos_msg_vgnd.vector.x = cv_slam.position_vgnd.getX();
+  pos_msg_vgnd.vector.y = cv_slam.position_vgnd.getY();
+  pos_msg_vgnd.vector.z = cv_slam.position_vgnd.getZ();
+
+  z_hat_pub.publish(z_hat_msg);
+  pos_pub_vgnd.publish(pos_msg_vgnd);
+  z_static_states_pub.publish(z_static_states_msg);
 }

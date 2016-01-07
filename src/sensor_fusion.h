@@ -9,7 +9,8 @@
 #define SENSOR_FUSION_H_
 
 #include <ros/ros.h>
-#include <geometry_msgs/Vector3Stamped.h>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
+
 #include <tf/transform_datatypes.h>
 #include <tf/tf.h>
 #include <std_msgs/String.h>
@@ -22,127 +23,235 @@
 
 #include "ekf.h"
 
-#define ROLLING_FILTER_WINDOW 40
-#define IMU_FREQUENCY 52.5
-#define DEFAULT_HEIGHT 0.8
-#define GRAVITY_MSS 9.81
+#define ROLLING_FILTER_WINDOW           40
+#define IMU_FREQUENCY                   52.5
+#define DEFAULT_HEIGHT                  0.8
+#define GRAVITY_MSS                     9.81
 
-#define MAX_BUFFER_SIZE 150
-#define STD_DEV_THRESHOLD 0.18
-#define DATA_DELAY 6
-#define SONAR_DELTA_READING_MAX 0.4
+#define MAX_BUFFER_SIZE                 150
+#define STD_DEV_THRESHOLD               0.18
+#define DATA_DELAY                      6
+#define SONAR_DELTA_READING_MAX         0.4
 
-#define VISION_BREAKSIGNAL_THRESHOLD 2
-#define SONAR_LOSS_COUNT_THRESHOLD 100
+#define VISION_BREAKSIGNAL_THRESHOLD    2                       //time to wait before assuming sensor data has been lost
+#define SONAR_LOSS_TIME_THRESHOLD       3                       //time to wait before assuming sensor data has been lost
 
-//----------INITIAL CONFIGURATION---------------
-#define KNOB_CHANNEL 6
-#define CHANNEL_MAX 2157
-#define CHANNEL_MIN 840
-//==============================================
+#define GROUND_PLANE_POINTS             100                     //camera initial rotation correction parameter
+#define DEBUG_WITH_ROSBAG               1                       //if 1 we are checking the working on a rosbag 0 for realtime operation
 
-//All the channel variables used for sending reset and other signals
-#define CHANNEL_MID (CHANNEL_MAX + CHANNEL_MIN)/2
-extern float chnl_switching;
-extern float chnl_original;
-extern float chnl_switching_cutoff_freq;
-extern float chnl_switching_dt;
+enum sensor_status_t
+{
+  UNINITIALIZED,
+  HEALTHY,
+  DIVERGED,
+  LOST
+};
 
-//The calibration algorithm takes in 100 points that it has obtained from the visual slam algorithm and rotates them such that they are
-//horizontal. This rotation is called the camera rotation angle and is used because it is assumed that the ground is perfectly horizontal
-//It has been employed here because the camera though static with respect to the quad is not always horizontal and there may be tilt errors
-//while being powered up
-#define GROUND_PLANE_POINTS 100
+class SensorSonar
+{
+public:
+  bool flag_sonar_enabled;
+  bool flag_sonar_initialized;
+  bool flag_sonar_diverged;
+  bool flag_sonar_lost;
 
-//current orientation
-extern double phi, theta, psi;
+  ros::Time last_sonar_stamp;
+  float depth;
+  float sonar_diverged_time;
 
-//initializing the flag variables
-extern bool flag_sonar_enabled;
-extern bool flag_sonar_initialized;
-extern bool flag_lamda_initialized;
-extern int sonar_lost_count;
+public:
 
-// bool for setting the home
-extern bool SVO_INITIATED;
-extern bool SVO_RESET_SENT;
-extern bool FLAG_CAMERA_CALIBRATED;
+  SensorSonar();
 
-//timestamp of the last visual sensor
-extern ros::Time last_cv_stamp;
+  //initialize the SONAR
+  void initialize(float z, ros::Time stamp);
 
-//storing the corresponding visual and sonar data in a queue
-extern Queue cv_sonar_correspondance;
+  //checks if raw data is totally out of range
+  bool isGlitching(float z);
 
-//position x,y,z acquired from vslam in the inertial frame
-extern tf::Vector3 position_vgnd;
+  //process Sonar data
+  void processData(float z, ros::Time stamp);
+};
 
-//rotation matrices
-extern tf::Matrix3x3 R_HBF_to_GND;
-extern tf::Matrix3x3 R_b_to_HBF;
-extern tf::Matrix3x3 R_b_to_GND;
-extern tf::Matrix3x3 R_b_to_VGND;
-extern tf::Matrix3x3 R_vb_vgnd_t;
-extern tf::Matrix3x3 R_calib;
-extern double phi_v, theta_v, psi_v;
+class SensorCV
+{
+public:
+  // bool for setting the home
+  bool flag_VSLAM_initiated;
+  bool flag_VSLAM_reset_sent;
+  bool flag_camera_rotation_corrected;
+  bool flag_VSLAM_lost;
 
-//acceleration in the horizontal body fixed frame
-extern tf::Vector3 accel_hbf;
+  //timestamp of the last vision sensor
+  ros::Time last_cv_stamp;
 
-//position as sensed in vslam frame with respect to an inertial frame
-extern geometry_msgs::Vector3Stamped pos_msg_vgnd;
-extern ros::Publisher pos_pub_vgnd;
+  //position x,y,z acquired from vslam in the inertial frame
+  tf::Vector3 position_vgnd;
+  double phi_v, theta_v, psi_v;
 
-//position as sensed in vslam body frame
-extern geometry_msgs::Vector3Stamped pos_msg_vb;
-extern ros::Publisher pos_pub_vb;
+  //stores the initial ground points which are used for calibrating the camera
+  std::vector<Vector3f> ground_points;
+  int ground_points_index;
+  Vector3f normal;
+  float depth;
 
-//acceleration as sensed in horizontal body frame
-extern geometry_msgs::Vector3Stamped acc_msg_hbf;
-extern ros::Publisher acc_pub_hbf;
+  //Rotation matrix for correcting the map points such that the mapped points are horizontal
+  tf::Matrix3x3 R_calib;
 
-//estimated state z_hat and z_hat_dot
-extern geometry_msgs::Vector3Stamped z_hat_msg;
-extern ros::Publisher z_hat_pub;
+public:
+  SensorCV();
 
-//publishing the current position and velocity in VGND frame
-extern geometry_msgs::PoseStamped cv_pose_msg;
-extern ros::Publisher cv_pose_pub;
+  //correct for the camera rotation with respect to the body
+  void correctCameraRotation();
 
-//publishing svo_remote key
-extern std_msgs::String key_msg;
-extern ros::Publisher svo_remote_key_pub;
+  //initialize camera data
+  void initializeVSLAM();
 
-//converting and publishing the waypoint from ned-i to ned-b frame
-extern geometry_msgs::Vector3 waypoint_msg_nedb;
-extern ros::Publisher waypoint_pub;
+  //process Vision Data
+  void processVSLAMData();
 
-extern visualization_msgs::Marker points_msg;
-extern ros::Publisher points_pub;
+  //reset the camera sensor
+  void resetCV();
+};
 
-// kalman observer for x and y
-extern IMU_CV_EKF ekf_z;
-extern geometry_msgs::Vector3Stamped z_static_states_msg;
-extern ros::Publisher z_static_states_pub;
+class Queue
+{
+  std::vector<float> bufferX;
+  std::vector<float> bufferY;
+  float var_sum;
+  float sum;
+  float std_dev_threshold;
+  int max_buffer_size;
+  int data_delay;               //if val is6 =>6*25ms = 150ms assuming sonar data comes after a delay of 150ms after vision data and sonar data is coming in at 40Hz
 
-//stores the initial ground points which are used for calibrating the camera
-extern std::vector<Vector3f> ground_points;
-extern int ground_points_index;
-extern Vector3f normal;
-extern float depth;
+public:
+  float mean;
+  float std_dev;
 
-// z queue maintaining last values
-extern std::vector<double> rolling_q;
-extern int start, end;
+public:
+  //constructor for the queue
+  Queue(float threshold, int delay_count, int max_buffer);
 
-void calibrateCamera();
+  //inserts elements into the queue
+  void insertElement(float valx, float valy);
 
-bool isOutlier(double z);
+  //checks if the variance of the data meets a certain minimum threshold
+  bool checkData();
 
-void initializeSONAR(float z);
+  //returns the scale and constant of the vision estimate
+  void calculateScale(float &scale, float &z_0);
 
-void processSonarData(float z);
+  //clears the buffers and initializes the scale and bias to zero;
+  void clear();
 
-void resetCV();
+};
+
+class SensorFusion
+{
+public:
+  //position fused
+  tf::Vector3 position;
+
+  //current orientation
+  double phi, theta, psi;
+
+private:
+  //object for the sonar
+  SensorSonar sonar;
+
+  //object for the vslam
+  SensorCV cv_slam;
+
+  struct SensorHealth
+  {
+    sensor_status_t cv;
+    sensor_status_t sonar;
+    sensor_status_t imu;
+    sensor_status_t baro;
+  }sensor_health;
+
+  //initializing the flag variable for the estiation of lambda
+  bool flag_lamda_initialized;
+
+  //storing the corresponding visual and sonar data in a queue
+  Queue cv_sonar_correspondance;
+  // z queue maintaining last values
+  std::vector<double> rolling_q;
+  int start, end;
+
+  // kalman observer for estimating scale lambda from z
+  IMU_CV_EKF ekf_z;
+
+  tf::Matrix3x3 R_HBF_to_GND;
+  tf::Matrix3x3 R_b_to_HBF;
+  tf::Matrix3x3 R_b_to_GND;
+  tf::Matrix3x3 R_b_to_VGND;
+
+  //acceleration in the horizontal body fixed frame
+  tf::Vector3 accel_hbf;
+
+public:
+  //the following are messages published by this node
+
+ //msessages and publishers for publishing topics
+  geometry_msgs::Vector3Stamped z_static_states_msg;
+  ros::Publisher z_static_states_pub;
+
+  //position as sensed in vslam frame with respect to an inertial frame
+  geometry_msgs::Vector3Stamped pos_msg_vgnd;
+  ros::Publisher pos_pub_vgnd;
+
+  //acceleration as sensed in horizontal body frame
+  geometry_msgs::Vector3Stamped acc_msg_hbf;
+  ros::Publisher acc_pub_hbf;
+
+  //estimated state z_hat and z_hat_dot
+  geometry_msgs::Vector3Stamped z_hat_msg;
+  ros::Publisher z_hat_pub;
+
+  //publishing the current position and velocity in VGND frame
+  geometry_msgs::PoseStamped cv_pose_msg;
+  ros::Publisher cv_pose_pub;
+
+  visualization_msgs::Marker map_points_msg;
+  ros::Publisher map_points_pub;
+
+private:
+  //checks if the sonar data is an outlier
+  bool isSonarDataOutlier(double z);
+
+  //initialize sonar based on previous measurements
+  void initializeSonar(double z, ros::Time stamp);
+
+public:
+
+  SensorFusion();
+
+  //update based on imu data
+  void updateIMUData(const sensor_msgs::Imu::ConstPtr& msg);
+
+  //update the sonar based measurements
+  void updateSonarData(double z, ros::Time stamp);
+
+  //update the VSLAM data
+  void updateVSLAMData(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg);
+
+  //checks whether VSLAM is running fine
+  bool isVSLAMEstimationHealthy();
+
+  //reset the VSLAM
+  void resetVSLAM();
+
+  //The camera of the quad may not be perfectly vertical because of which the ground is not perfectly horizontal
+  //This function corrects the rotation such that the map points which are obtained are on a horizontal ground
+  void updateVSLAM_MapPointsRotationCorrection(const visualization_msgs::Marker::ConstPtr& msg);
+
+  //Monitors the health of different sensor modalities
+  void monitorSensorHealth();
+
+  //publishes different debugging messages
+  void publishDebugMessages(ros::Time stamp);
+
+};
 
 #endif /* SENSOR_FUSION_H_ */

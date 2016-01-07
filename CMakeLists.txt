@@ -49,3 +49,6 @@ target_link_libraries(setpoint_enu   ${catkin_LIBRARIES} )
 
 add_executable(trak_marker src/marker_track.cpp)
 target_link_libraries(trak_marker   ${catkin_LIBRARIES} )
+
+add_executable(dummy_visionpose_publisher src/dummy_position.cpp)
+target_link_libraries(dummy_visionpose_publisher   ${catkin_LIBRARIES} )

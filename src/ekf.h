@@ -6,11 +6,8 @@
  */
 
 #include <Eigen/Dense>
-#include <geometry_msgs/PoseWithCovarianceStamped.h>
-#include <geometry_msgs/Quaternion.h>
-#include <tf/tf.h>
-#include <tf/transform_broadcaster.h>
 
+#include <iostream>
 #include <fstream>
 
 #ifndef EKF_H_
@@ -64,36 +61,4 @@ public:
   void updateScaleBiasSVO(float scale, float z0);
 
 };
-
-class Queue
-{
-  std::vector<float> bufferX;
-  std::vector<float> bufferY;
-  float var_sum;
-  float sum;
-  float std_dev_threshold;
-  int max_buffer_size;
-  int data_delay;               //if val is6 =>6*25ms = 150ms assuming sonar data comes after a delay of 150ms after vision data and sonar data is coming in at 40Hz
-
-public:
-  float mean;
-  float std_dev;
-
-public:
-  //constructor for the queue
-  Queue(float threshold, int delay_count, int max_buffer);
-
-  //inserts elements into the queue
-  void insertElement(float valx, float valy);
-
-  //checks if the variance of the data meets a certain minimum threshold
-  bool checkData();
-
-  //returns the scale and constant of the vision estimate
-  void calculateScale(float &scale, float &z_0);
-
-  //clears the buffers and initializes the scale and bias to zero;
-  void clear();
-};
-
 #endif /* EKF_H_ */
