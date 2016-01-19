@@ -14,7 +14,6 @@ Queue::Queue(float threshold, int delay_count, int max_buffer)
   max_buffer_size = max_buffer;
 }
 
-
 void Queue::insertElement(float valx, float valy)
 {
   if(bufferX.size() < max_buffer_size)
@@ -117,6 +116,14 @@ void Queue::clear()
   sum = 0;
   mean = 0;
   std_dev =0;
+}
+
+SensorIMU::SensorIMU()
+{
+  a_b = tf::Vector3(0.0, 0.0, 0.0);
+  phi = 0;
+  theta = 0;
+  psi = 0;
 }
 
 SensorSonar::SensorSonar()
@@ -286,17 +293,21 @@ void SensorFusion::updateIMUData(const sensor_msgs::Imu::ConstPtr& msg)
   double psi_temp;
 
   R_b_to_GND.getRPY(phi, theta, psi_temp);
+  imu.phi = phi;
+  imu.theta = theta;
+  imu.psi = psi_temp;
+  imu.last_imu_stamp = msg->header.stamp;
 
 //  R_HBF_to_GND.setRPY(0, 0, psi);
   R_b_to_HBF.setRPY(phi, theta, 0);
 
-  tf::Vector3 a_b(msg->linear_acceleration.x,
+  imu.a_b = tf::Vector3(msg->linear_acceleration.x,
                   msg->linear_acceleration.y,
                   msg->linear_acceleration.z);
 
   tf::Vector3 g(0,0,-GRAVITY_MSS);      //the gravity vector
 
-  accel_hbf = R_b_to_HBF*a_b + g;       //acceleration as obtained in the horizontal body frame and in NED coordinate system
+  accel_hbf = R_b_to_HBF*imu.a_b + g;       //acceleration as obtained in the horizontal body frame and in NED coordinate system
 
   //IMU based prediction will work only as long as estimate is within acceptable limits of SONAR
   if(ekf_z.x_hat_kplus1_kplus1(0,0) > 0.3 && ekf_z.x_hat_kplus1_kplus1(0,0) < 4.5 )             // the absolute lower limit possible for ultrasonic sensors
@@ -479,10 +490,25 @@ void SensorFusion::updateVSLAM_MapPointsRotationCorrection(const visualization_m
 //Monitors the health of all sensors
 void SensorFusion::monitorSensorHealth()
 {
+  ros::Time t_now = ros::Time::now();
+  ros::Duration delt;
+
+  delt = t_now - imu.last_imu_stamp;
+  if(delt.toSec()>IMU_LOSS_THRESHOLD)
+  {
+    sensor_health.imu = LOST;
+  }
+
+  delt = t_now - sonar.last_sonar_stamp;
+  if(delt.toSec()>SONAR_LOSS_TIME_THRESHOLD)
+  {
+    sensor_health.sonar = LOST;
+  }
+
   /*check when was the last vision based reading obtained; if(greater than a threshold)
        * then we have to reinitalize the scale ,bias and plane calibration
        */
-  ros::Duration delt = ros::Time::now() - cv_slam.last_cv_stamp;
+  delt = t_now - cv_slam.last_cv_stamp;
   if(delt.toSec()>VISION_BREAKSIGNAL_THRESHOLD)
   {
     cv_slam.resetCV();

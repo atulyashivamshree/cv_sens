@@ -1,12 +1,12 @@
 <launch>
 
-	<arg name="serial_port" default="/dev/ttyACM0" />
+	<arg name="px4flow_serial_port" default="/dev/px4flow" />
 	<arg name="baudrate" default="57600" />
 
 	<node name="px4flow" pkg="px4flow" type="px4flow_node" output="screen" respawn="true" clear_params="true">
-        	<param name="serial_port" value="$(arg serial_port)" />
+        	<param name="serial_port" value="$(arg px4flow_serial_port)" />
 		<param name="baudrate" value="$(arg baudrate)" />
     	</node>
 
-	<include file="$(find cv_sens)/launch/cam_82.launch" />
+	<include file="$(find cv_sens)/launch/mv_cam.launch" />
 </launch>

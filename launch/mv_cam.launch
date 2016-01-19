@@ -1,7 +1,7 @@
 <launch>
     <!-- Common Interface -->
     <arg name="device" default="26804182"/>
-    <arg name="rate" default="30"/>
+    <arg name="rate" default="25"/>
 
     <!-- Camera Settings -->
     <arg name="serial" default="$(arg device)"/>
@@ -17,8 +17,8 @@
     <arg name="dcfm" default="0"/>
     <arg name="hdr" default="false"/>
     <arg name="wbp" default="-1"/>
-    <arg name="expose_us" default="10000"/>
-    <arg name="gain_db" default="12.0"/>
+    <arg name="expose_us" default="1000"/>
+    <arg name="gain_db" default="0.0"/>
     <arg name="boost" default="false"/>
     <arg name="mm" default="0"/>
     <arg name="jpeg_quality" default="80"/>

@@ -33,6 +33,7 @@
 #define DATA_DELAY                      6
 #define SONAR_DELTA_READING_MAX         0.4
 
+#define IMU_LOSS_THRESHOLD              0.5
 #define VISION_BREAKSIGNAL_THRESHOLD    2                       //time to wait before assuming sensor data has been lost
 #define SONAR_LOSS_TIME_THRESHOLD       3                       //time to wait before assuming sensor data has been lost
 
@@ -45,6 +46,20 @@ enum sensor_status_t
   HEALTHY,
   DIVERGED,
   LOST
+};
+
+class SensorIMU
+{
+public:
+  ros::Time last_imu_stamp;
+  tf::Vector3 a_b;
+
+  float phi;
+  float theta;
+  float psi;
+
+public:
+  SensorIMU();
 };
 
 class SensorSonar
@@ -156,6 +171,9 @@ public:
   double phi, theta, psi;
 
 private:
+  //object for the IMU data
+  SensorIMU imu;
+
   //object for the sonar
   SensorSonar sonar;
 
