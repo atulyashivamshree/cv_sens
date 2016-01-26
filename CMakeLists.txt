@@ -42,8 +42,8 @@ add_library(mavros_debug
 	 )
 target_link_libraries(mavros_debug ${catkin_LIBRARIES} ${mavros_LIBRARIES})
 
-add_executable(pos_fusion src/fusion_main.cpp src/ekf.cpp src/sensor_fusion.cpp)
-target_link_libraries(pos_fusion   ${catkin_LIBRARIES} ${mavros_LIBRARIES})
+add_executable(position_fusion src/fusion_main.cpp src/ekf.cpp src/sensor_fusion.cpp src/sensor_modules.cpp)
+target_link_libraries(position_fusion   ${catkin_LIBRARIES} ${mavros_LIBRARIES})
 
 add_executable(setpoint_enu src/setpoint.cpp)
 target_link_libraries(setpoint_enu   ${catkin_LIBRARIES} )

@@ -9,124 +9,65 @@
 #define SENSOR_FUSION_H_
 
 #include <ros/ros.h>
+
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
-
-#include <tf/transform_datatypes.h>
-#include <tf/tf.h>
-#include <std_msgs/String.h>
 #include <sensor_msgs/Imu.h>
-
 #include <visualization_msgs/Marker.h>
+
+#include <diagnostic_updater/diagnostic_updater.h>
+#include <diagnostic_updater/publisher.h>
 
 #include <px_comm/OpticalFlow.h>
 #include <mavros_msgs/RCIn.h>
 
 #include "ekf.h"
+#include "sensor_modules.h"
 
 #define ROLLING_FILTER_WINDOW           40
-#define IMU_FREQUENCY                   52.5
-#define DEFAULT_HEIGHT                  0.8
-#define GRAVITY_MSS                     9.81
+#define IMU_FREQUENCY                   52.5f
+#define DEFAULT_HEIGHT                  0.8f
+#define SONAR_INITIALIZATION_MAX_HEIGHT 1.2f
+#define GRAVITY_MSS                     9.81f
 
 #define MAX_BUFFER_SIZE                 150
-#define STD_DEV_THRESHOLD               0.18
+#define STD_DEV_THRESHOLD               0.18f
 #define DATA_DELAY                      6
-#define SONAR_DELTA_READING_MAX         0.4
+#define SONAR_DELTA_READING_MAX         0.6f
 
-#define IMU_LOSS_THRESHOLD              0.5
+#define IMU_LOSS_THRESHOLD              0.5f
 #define VISION_BREAKSIGNAL_THRESHOLD    2                       //time to wait before assuming sensor data has been lost
 #define SONAR_LOSS_TIME_THRESHOLD       3                       //time to wait before assuming sensor data has been lost
 
-#define GROUND_PLANE_POINTS             100                     //camera initial rotation correction parameter
 #define DEBUG_WITH_ROSBAG               1                       //if 1 we are checking the working on a rosbag 0 for realtime operation
+#define SYSTEM_ID                       6
 
-enum sensor_status_t
+class RollingQueue
 {
-  UNINITIALIZED,
-  HEALTHY,
-  DIVERGED,
-  LOST
-};
-
-class SensorIMU
-{
-public:
-  ros::Time last_imu_stamp;
-  tf::Vector3 a_b;
-
-  float phi;
-  float theta;
-  float psi;
-
-public:
-  SensorIMU();
-};
-
-class SensorSonar
-{
-public:
-  bool flag_sonar_enabled;
-  bool flag_sonar_initialized;
-  bool flag_sonar_diverged;
-  bool flag_sonar_lost;
-
-  ros::Time last_sonar_stamp;
-  float depth;
-  float sonar_diverged_time;
+  // z queue maintaining last values
+  std::vector<double> rolling_q;
+  int start, end, size;
+  float default_value;
+  bool is_full;
 
 public:
 
-  SensorSonar();
+  RollingQueue(int length, float default_val);
 
-  //initialize the SONAR
-  void initialize(float z, ros::Time stamp);
+  //reset the queue with some default initial value
+  void reset();
 
-  //checks if raw data is totally out of range
-  bool isGlitching(float z);
+  //insert an element into the queue
+  void insert(float z);
 
-  //process Sonar data
-  void processData(float z, ros::Time stamp);
-};
+  void printQueue();
 
-class SensorCV
-{
-public:
-  // bool for setting the home
-  bool flag_VSLAM_initiated;
-  bool flag_VSLAM_reset_sent;
-  bool flag_camera_rotation_corrected;
-  bool flag_VSLAM_lost;
+  //if some predefined number of data points have been inserted the queue is said to be initialized
+  inline bool isInitialized() {
+    return is_full;
+  }
 
-  //timestamp of the last vision sensor
-  ros::Time last_cv_stamp;
-
-  //position x,y,z acquired from vslam in the inertial frame
-  tf::Vector3 position_vgnd;
-  double phi_v, theta_v, psi_v;
-
-  //stores the initial ground points which are used for calibrating the camera
-  std::vector<Vector3f> ground_points;
-  int ground_points_index;
-  Vector3f normal;
-  float depth;
-
-  //Rotation matrix for correcting the map points such that the mapped points are horizontal
-  tf::Matrix3x3 R_calib;
-
-public:
-  SensorCV();
-
-  //correct for the camera rotation with respect to the body
-  void correctCameraRotation();
-
-  //initialize camera data
-  void initializeVSLAM();
-
-  //process Vision Data
-  void processVSLAMData();
-
-  //reset the camera sensor
-  void resetCV();
+  //finds the median of data and returns true if input - median > threshold
+  bool isOutlierWithMedianFilter(float input, float threshold);
 };
 
 class Queue
@@ -151,7 +92,7 @@ public:
   void insertElement(float valx, float valy);
 
   //checks if the variance of the data meets a certain minimum threshold
-  bool checkData();
+  bool checkCompletion();
 
   //returns the scale and constant of the vision estimate
   void calculateScale(float &scale, float &z_0);
@@ -176,6 +117,8 @@ private:
 
   //object for the sonar
   SensorSonar sonar;
+  RollingQueue sonar_queue;
+  ros::Time last_good_sonar_stamp;
 
   //object for the vslam
   SensorCV cv_slam;
@@ -188,14 +131,14 @@ private:
     sensor_status_t baro;
   }sensor_health;
 
-  //initializing the flag variable for the estiation of lambda
-  bool flag_lamda_initialized;
+  struct Flags
+  {
+    bool lambda_initialized;            //initializing the flag variable for the estiation of lambda
+    bool ekf_prediction_enabled;        //when it is true ekf prediction is enabled
+  }flags;
 
   //storing the corresponding visual and sonar data in a queue
   Queue cv_sonar_correspondance;
-  // z queue maintaining last values
-  std::vector<double> rolling_q;
-  int start, end;
 
   // kalman observer for estimating scale lambda from z
   IMU_CV_EKF ekf_z;
@@ -251,21 +194,27 @@ public:
   //update the sonar based measurements
   void updateSonarData(double z, ros::Time stamp);
 
-  //update the VSLAM data
-  void updateVSLAMData(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg);
-
-  //checks whether VSLAM is running fine
-  bool isVSLAMEstimationHealthy();
-
-  //reset the VSLAM
-  void resetVSLAM();
+  //reset the Sonar
+  void resetSonar();
 
   //The camera of the quad may not be perfectly vertical because of which the ground is not perfectly horizontal
   //This function corrects the rotation such that the map points which are obtained are on a horizontal ground
   void updateVSLAM_MapPointsRotationCorrection(const visualization_msgs::Marker::ConstPtr& msg);
 
+  //update the VSLAM data
+  void updateVSLAMData(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg);
+
+  //reset the VSLAM
+  void resetVSLAM();
+
+  //checks whether VSLAM is running fine
+  bool isVSLAMEstimationHealthy();
+
+  //checks whether Altitude being published is healthy
+  bool isAltitudeHealthy();
+
   //Monitors the health of different sensor modalities
-  void monitorSensorHealth();
+  void monitorSensorHealth(diagnostic_updater::DiagnosticStatusWrapper &stat);
 
   //publishes different debugging messages
   void publishDebugMessages(ros::Time stamp);

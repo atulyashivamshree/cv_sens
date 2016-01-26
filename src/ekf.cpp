@@ -23,32 +23,32 @@ IMU_CV_EKF::IMU_CV_EKF(double del_t)
   x_hat_kplus1_kplus1 = x_hat_k_k;
   P_kplus1_kplus1 = P_k_k;
 
-  V_k = MatrixXd::Identity(5,5);
-  V_k(0,0) = 0.3*0.3*dt;
-  V_k(1,1) = 0.6*0.6*dt;
-  V_k(2,2) = 0.04*0.04*dt;
-  V_k(3,3) = 0.003*dt*dt;
-  V_k(4,4) = 0.001*dt*dt;
+  Q_k(0,0) = pow(1.0,2);
+
+//  V_k = MatrixXd::Identity(5,5);
+//  V_k(0,0) = 0.3*0.3*dt;
+//  V_k(1,1) = 0.6*0.6*dt;
+//  V_k(2,2) = 0.04*0.04*dt;
+//  V_k(3,3) = 0.003*dt*dt;
+//  V_k(4,4) = 0.001*dt*dt;
 
   W_v << 0.1;
-  W_u << 0.02;
+  W_u << pow(0.04,2);                     //assuming error with variance of 2cm
 
   g = 9.81;
 
   A_k = MatrixXd::Zero(5,5);
   A_k(0,1) = 1;
   A_k(1,2) = 1;
-
   F_k = MatrixXd::Identity(5,5) + A_k*dt;
 
   B_k = MatrixXd::Zero(5,1);
   B_k(1,0) = dt;
+  L_k = B_k;
 
   H_u = MatrixXd::Zero(1,5);
   H_v = MatrixXd::Zero(1,5);
   H_u(0,0) = 1;
-
-  std::cout<<"ekf initialised\n";
 
 }
 
@@ -75,7 +75,7 @@ void IMU_CV_EKF::prediction(double u)
   P_k_k = P_kplus1_kplus1;
 
   x_hat_kplus1_k = F_k*x_hat_k_k + B_k*u;
-  P_kplus1_k = F_k*P_k_k*F_k.transpose() + V_k;
+  P_kplus1_k = F_k*P_k_k*F_k.transpose() + L_k*Q_k*L_k.transpose();
 
   x_hat_kplus1_kplus1 = x_hat_kplus1_k;
   P_kplus1_kplus1 = P_kplus1_k;

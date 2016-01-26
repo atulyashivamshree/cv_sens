@@ -6,7 +6,6 @@
  */
 
 #include "sensor_fusion.h"
-#include "ekf.h"
 
 //----------INITIAL CONFIGURATION---------------
 #define KNOB_CHANNEL 6
@@ -133,14 +132,13 @@ void px4flowCallback(const px_comm::OpticalFlow::ConstPtr& msg)
 
   sensor_fusion.updateSonarData(z, msg->header.stamp);
 
-  if(sensor_fusion.isVSLAMEstimationHealthy() == false)
+  if(sensor_fusion.isVSLAMEstimationHealthy() == false && sensor_fusion.isAltitudeHealthy() == true)
   {
     publishSensPos(msg->header.stamp, sensor_fusion.position.getX(),
                                      sensor_fusion.position.getY(),
                                      sensor_fusion.position.getZ(),
                                      sensor_fusion.psi,
                                       false);
-
     //For Debugging
 //    publishSensPos(msg->header.stamp, 0, -3.4*sin(M_PI*tmp_count), ekf_z.x_hat_kplus1_kplus1(0,0), M_PI*5/6);
   }
@@ -151,11 +149,16 @@ int main(int argc, char *argv[])
   ros::init(argc, argv, "ekf_vslam_fusion");
   ros::NodeHandle n;
 
+  diagnostic_updater::Updater health_monitor;
+
+  health_monitor.setHardwareIDf("Nayan-%i Odroid", SYSTEM_ID);
+  health_monitor.add("Sensor Health Monitor", &sensor_fusion, &SensorFusion::monitorSensorHealth);
+
   ros::Subscriber vslam_sub = n.subscribe("/svo/pose", 10, vslamCallback);
-  ros::Subscriber stats_sub = n.subscribe("/mavros/rc/in", 100, channelCallback);
-  ros::Subscriber rpy_sub = n.subscribe("imu/data_raw", 100, imuCallback);
+  ros::Subscriber stats_sub = n.subscribe("/mavros/rc/in", 10, channelCallback);
+  ros::Subscriber rpy_sub = n.subscribe("/mavros/imu/data", 100, imuCallback);
   ros::Subscriber px4flow_sub = n.subscribe("/px4flow/opt_flow", 10, px4flowCallback);
-  ros::Subscriber points_sub = n.subscribe("svo/points", 10, visualizationMarkerCallback);
+  ros::Subscriber points_sub = n.subscribe("/svo/points", 20, visualizationMarkerCallback);
 
   sensor_fusion.pos_pub_vgnd = n.advertise<geometry_msgs::Vector3Stamped>("cv_pose", 100);
   sensor_fusion.acc_pub_hbf = n.advertise<geometry_msgs::Vector3Stamped>("sens_acc_hbf", 100);
@@ -175,9 +178,13 @@ int main(int argc, char *argv[])
     //check for sensor callbacks
     ros::spinOnce();
 
-    //check for health of the IMU, CV and Sonar
-    sensor_fusion.monitorSensorHealth();
+    //mmonitor if all sensors are healthy
+    health_monitor.update();
 
+    //publish debug messages
+    sensor_fusion.publishDebugMessages(ros::Time::now());
+
+    //sleep for a particular amount of time
     loop_rate.sleep();
   }
 }
