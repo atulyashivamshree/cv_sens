@@ -1,67 +1,11 @@
 /*
- * marker_track.cpp
+ * pattern_track.cpp
  *
- *  Created on: 22-Dec-2015
+ *  Created on: 02-Feb-2016
  *      Author: atulya
  */
 
-#include <ros/ros.h>
-#include <geometry_msgs/Vector3Stamped.h>
-#include <tf/transform_datatypes.h>
-#include <tf/tf.h>
-#include <std_msgs/String.h>
-#include <sensor_msgs/Imu.h>
-#include <sensor_msgs/NavSatFix.h>
-#include <px_comm/OpticalFlow.h>
-
-#include <vikit/user_input_thread.h>
-
-#include <mavros_msgs/RCIn.h>
-
-#define ROC_XY                          2.0f
-#define ROC_Z                           0.4
-#define ROC_YAW                         15*M_PI/180.0
-#define WP_SEND_INTERVAL                5.0f
-
-#define CALIBRATION_INLIER_ERR_THRSH    9.0*M_PI/180.0f
-#define CALIBRATION_NUM_VARIABLES       20                      //assuming 10 sec @2Hz
-#define CALIBRATION_INLIER_PERCENT      75
-
-boost::shared_ptr<vk::UserInputThread> keyboard_input;
-
-geometry_msgs::PoseStamped pose_msg;
-ros::Publisher waypoint_pub;
-
-geometry_msgs::Vector3Stamped rpy_imu_msg;
-ros::Publisher rpy_imu_pub;
-
-geometry_msgs::Vector3Stamped rpy_cam_msg;
-ros::Publisher rpy_cam_pub;
-
-ros::Time prev_wp_time;
-
-//All possible rotation matrices according to the different frames
-tf::Matrix3x3 R_CB_EM, R_EB_CIB, R_EE_EB, R_EE_EM, R_CB_CIB, R_EE_EHBF;
-tf::Matrix3x3 R_CB_CIB_ideal;
-
-bool flag_calibration_started = false;
-bool flag_calibration_image_acquired = false;
-bool flag_calibration_finished = false;
-int calibration_count = 0;
-int calibration_inlier_count = 0;
-
-float target_height;
-float marker_pos[3];
-
-void initializeRotation()
-{
-  R_EE_EM = R_EE_EB;
-  flag_calibration_started = true;
-  double phi, theta, psi;
-  R_EE_EM.getRPY(phi, theta, psi);
-  ROS_INFO("Calibration Initiated\n Rot from IMU is [R: %.3f, P: %.3f, Y: %.3f]\n Press C when there is good tracking to calibrate rotation correction\n",
-                                     phi, theta, psi);
-}
+#include "cv_sens/pattern_track.h"
 
 void printRotationMatrix(tf::Matrix3x3 R)
 {
@@ -71,7 +15,45 @@ void printRotationMatrix(tf::Matrix3x3 R)
                R.getRow(2).getX(), R.getRow(2).getY(), R.getRow(2).getZ());
 }
 
-void useImageForCalibration()
+
+Tracker::Tracker(ros::NodeHandle nh, float z): it(nh)
+{
+  R_EB_CIB.setRPY(M_PI , 0.0f, -M_PI/2);
+  R_CB_CIB_ideal.setRPY(0.0f, 0.0f, 0.0f);
+  R_CB_CIB.setRPY(0.0f,0.0f, 0.0f);
+  R_CB_EM.setRPY(0.0f,0.0f, 0.0f);
+  R_EE_EB.setRPY(0.0f,0.0f, 0.0f);
+  R_EE_EM.setRPY(0.0f,0.0f, 0.0f);
+
+  target_height = z;
+
+  flag_calibration_started = false;
+  flag_calibration_image_acquired = false;
+  flag_calibration_finished = false;
+  calibration_count = 0;
+  calibration_inlier_count = 0;
+
+  cam_info_received = false;
+
+  keyboard_input = boost::make_shared<vk::UserInputThread>();
+}
+
+Tracker::~Tracker()
+{
+  keyboard_input->stop();
+}
+
+void Tracker::initializeRotation()
+{
+  R_EE_EM = R_EE_EB;
+  flag_calibration_started = true;
+  double phi, theta, psi;
+  R_EE_EM.getRPY(phi, theta, psi);
+  ROS_INFO("Calibration Initiated\n Rot from IMU is [R: %.3f, P: %.3f, Y: %.3f]\n Press C when there is good tracking to calibrate rotation correction\n",
+                                     phi, theta, psi);
+}
+
+void Tracker::useImageForCalibration()
 {
 
   double phi_v, theta_v, psi_v;
@@ -94,30 +76,108 @@ void useImageForCalibration()
                                        phi_v, theta_v, psi_v);
 }
 
-void bypassCalibration()
+void Tracker::bypassCalibration()
 {
   flag_calibration_finished = true;
   ROS_INFO("Bypassing calibration: Assuming that camera is vertical");
 }
 
-void sendPositionWithYaw(float x, float y, float z, float yaw)
+void Tracker::image_callback(const sensor_msgs::Image::ConstPtr& msg)
 {
-  tf::Matrix3x3 R;
-  R.setRPY(0,0,yaw);
-  tf::Quaternion q;
-  R.getRotation(q);
-  tf::quaternionTFToMsg(q, pose_msg.pose.orientation);
+  if(cam_info_received)
+  {
+    try
+    {
+      inImage = cv_bridge::toCvShare(msg, sensor_msgs::image_encodings::BGR8)->image;
 
-  //Sending position output to FCU
-  pose_msg.header.stamp = ros::Time::now();
-  pose_msg.pose.position.x = x;
-  pose_msg.pose.position.y = y;
-  pose_msg.pose.position.z = z;
-  waypoint_pub.publish(pose_msg);
+      markers.clear();
+      //Ok, let's detect
+      mDetector.detect(inImage, markers, camParam, marker_size, false);
 
+      for(size_t i=0; i<markers.size(); ++i)
+      {
+        // only publishing the selected marker
+        if(markers[i].id == marker_id)
+        {
+//          tf::Transform transform = aruco_ros::arucoMarker2Tf(markers[i]);
+//          tf::StampedTransform cameraToReference;
+//          cameraToReference.setIdentity();
+
+//          geometry_msgs::PoseStamped poseMsg;
+//          tf::poseTFToMsg(transform, poseMsg.pose);
+//          poseMsg.header.frame_id = reference_frame;
+//          poseMsg.header.stamp = curr_stamp;
+
+//          pose_pub.publish(poseMsg);
+
+        }
+        //Draw a boundary around each detected pattern
+        markers[i].draw(inImage,cv::Scalar(0,0,255),2);
+
+        //draw a 3d cube in each marker if there is 3d info
+        if(camParam.isValid() && marker_size!=-1)
+        {
+          for(size_t i=0; i<markers.size(); ++i)
+          {
+//            CvDrawingUtils::draw3dAxis(inImage, markers[i], camParam);
+          }
+        }
+
+        //show input with augmented information
+//                 cv_bridge::CvImage out_msg;
+//                 out_msg.header.stamp = curr_stamp;
+//                 out_msg.encoding = sensor_msgs::image_encodings::RGB8;
+//                 out_msg.image = inImage;
+//                 image_pub.publish(out_msg.toImageMsg());
+
+      }
+    }
+    catch (cv_bridge::Exception& e)
+    {
+     ROS_ERROR("cv_bridge exception: %s", e.what());
+     return;
+    }
+  }
 }
 
-void markerCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
+// wait for one camerainfo, then shut down that subscriber
+void Tracker::cam_info_callback(const sensor_msgs::CameraInfo &cam_info)
+{
+  cv::Mat cameraMatrix(3, 3, CV_32FC1);
+  cv::Mat distorsionCoeff(4, 1, CV_32FC1);
+  cv::Size size(cam_info.height, cam_info.width);
+
+  for(int i=0; i<9; ++i)
+    cameraMatrix.at<float>(i%3, i-(i%3)*3) = cam_info.K[i];
+
+  if(cam_info.D.size() >= 4)
+  {
+    for(int i=0; i<4; ++i)
+      distorsionCoeff.at<float>(i, 0) = cam_info.D[i];
+  }
+  else
+  {
+    ROS_WARN("length of camera_info D vector is not 4, assuming zero distortion...");
+    for(int i=0; i<4; ++i)
+      distorsionCoeff.at<float>(i, 0) = 0;
+  }
+
+  camParam = aruco::CameraParameters(cameraMatrix, distorsionCoeff, size);
+
+//  // handle cartesian offset between stereo pairs
+//  // see the sensor_msgs/CamaraInfo documentation for details
+//  rightToLeft.setIdentity();
+//  rightToLeft.setOrigin(
+//      tf::Vector3(
+//          -msg.P[3]/msg.P[0],
+//          -msg.P[7]/msg.P[5],
+//          0.0));
+
+  cam_info_received = true;
+  cam_info_sub.shutdown();
+}
+
+void Tracker::markerCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
 {
   double phi_v, theta_v, psi_v;
   double phi, theta, psi;
@@ -209,47 +269,14 @@ void markerCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
   marker_pos[1] = r_ehbf.getY();
   marker_pos[2] = r_ehbf.getZ();
 
-  if(flag_calibration_finished == true)
-  {
-    float dist_xy = sqrt(pow(marker_pos[0],2) + pow(marker_pos[1],2));
-    float dist_z = fabs((marker_pos[2] + target_height));
-
-    ros::Time t_now = ros::Time::now();
-    ros::Duration delt = t_now - prev_wp_time;
-
-    if(dist_xy > ROC_XY || dist_z > ROC_Z )
-    {
-      //Sending yaw output to FCU
-      float dist_yaw;
-
-      //check deviation of yaw from desired value
-      if(dist_yaw > ROC_YAW)
-      {
-        sendPositionWithYaw(0,0,0,0);
-      }
-      else
-      {
-        if(delt.toSec() > WP_SEND_INTERVAL)
-        {
-          prev_wp_time = t_now;
-          sendPositionWithYaw(marker_pos[0], marker_pos[1],
-                            marker_pos[2] + target_height, 0);
-        }
-      }
-    }
-  }
 }
 
-void globalPositionCallback(const sensor_msgs::NavSatFix::ConstPtr& msg)
+bool Tracker::isCalibrationFinished()
 {
-//  waypoint_msg.vector.y = msg->altitude;
+  return flag_calibration_finished;
 }
 
-void statsCallback(const mavros_msgs::RCIn::ConstPtr& msg)
-{
-}
-
-void imuCallback(const sensor_msgs::Imu::ConstPtr& msg)
+void Tracker::imuCallback(const sensor_msgs::Imu::ConstPtr& msg)
 {
   double phi, theta, psi;
 
@@ -263,13 +290,8 @@ void imuCallback(const sensor_msgs::Imu::ConstPtr& msg)
   R_EE_EHBF.setRPY(0.0f ,0.0f , psi);
 }
 
-void px4flowCallback(const px_comm::OpticalFlow::ConstPtr& msg)
-{
-  float z = msg->ground_distance;
-//  rpy_imu_msg.vector.y = -z;
-}
 
-void processUserAction()
+void Tracker::processUserAction()
 {
   if(keyboard_input!= NULL)
   {
@@ -293,59 +315,11 @@ void processUserAction()
   }
 }
 
-void publishDebugMessages()
+
+void Tracker::publishDebugMessages()
 {
   rpy_cam_pub.publish(rpy_cam_msg);
   rpy_imu_msg.header.stamp = ros::Time::now();
   rpy_cam_msg.header.stamp = ros::Time::now();
   rpy_imu_pub.publish(rpy_imu_msg);
-}
-
-int main(int argc, char *argv[])
-{
-  ros::init(argc, argv, "marker_setpoint_gen");
-  ros::NodeHandle n;
-
-  keyboard_input = boost::make_shared<vk::UserInputThread>();
-
-  ros::NodeHandle pnh("~");
-  pnh.param("z", target_height, float(2.7f));
-
-  R_EB_CIB.setRPY(M_PI , 0.0f, -M_PI/2);
-  R_CB_CIB_ideal.setRPY(0.0f, 0.0f, 0.0f);
-  R_CB_CIB.setRPY(0.0f,0.0f, 0.0f);
-  R_CB_EM.setRPY(0.0f,0.0f, 0.0f);
-  R_EE_EB.setRPY(0.0f,0.0f, 0.0f);
-  R_EE_EM.setRPY(0.0f,0.0f, 0.0f);
-
-  ROS_INFO("\nTarget height above marker is [%f]", target_height);
-  printf("\nKeep the quad over marker aligned with the front and press i\n");
-  printf("To bypass calibration press b\n");
-
-  prev_wp_time = ros::Time::now();
-
-  ros::Subscriber vslam_sub = n.subscribe("marker_pose", 1, markerCallback);
-//  ros::Subscriber stats_sub = n.subscribe("/mavros/rc/in", 10, statsCallback);
-  ros::Subscriber imu_sub = n.subscribe("/mavros/imu/data", 1, imuCallback);
-//  ros::Subscriber global_pos_sub = n.subscribe("/mavros/global_position/global", 10, globalPositionCallback);
-//  ros::Subscriber px4flow_sub = n.subscribe("/px4flow/opt_flow", 10, px4flowCallback);
-
-  waypoint_pub = n.advertise<geometry_msgs::PoseStamped>("waypoint", 10);
-  rpy_imu_pub = n.advertise<geometry_msgs::Vector3Stamped>("rpy_imu", 10);
-  rpy_cam_pub = n.advertise<geometry_msgs::Vector3Stamped>("rpy_cam", 10);
-
-  int rate = 10;
-  ros::Rate loop_rate(rate);
-
-  while(ros::ok())
-  {
-    ros::spinOnce();
-
-    processUserAction();
-
-    publishDebugMessages();
-
-    loop_rate.sleep();
-  }
-  keyboard_input->stop();
 }
