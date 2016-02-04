@@ -1,0 +1,5 @@
+<launch>
+	<include file="$(find cv_sens)/launch/nayan_essential.launch" />
+	<include file="$(find cv_sens)/launch/nayan_slave.launch" />
+	<include file="$(find cv_sens)/launch/sensor_fusion.launch"/>
+</launch>

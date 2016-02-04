@@ -18,9 +18,10 @@
 
 #include <mavros_msgs/RCIn.h>
 
-#define ROC_XY                          1.1
+#define ROC_XY                          2.0f
 #define ROC_Z                           0.4
 #define ROC_YAW                         15*M_PI/180.0
+#define WP_SEND_INTERVAL                5.0f
 
 #define CALIBRATION_INLIER_ERR_THRSH    9.0*M_PI/180.0f
 #define CALIBRATION_NUM_VARIABLES       20                      //assuming 10 sec @2Hz
@@ -36,6 +37,8 @@ ros::Publisher rpy_imu_pub;
 
 geometry_msgs::Vector3Stamped rpy_cam_msg;
 ros::Publisher rpy_cam_pub;
+
+ros::Time prev_wp_time;
 
 //All possible rotation matrices according to the different frames
 tf::Matrix3x3 R_CB_EM, R_EB_CIB, R_EE_EB, R_EE_EM, R_CB_CIB, R_EE_EHBF;
@@ -211,7 +214,10 @@ void markerCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
     float dist_xy = sqrt(pow(marker_pos[0],2) + pow(marker_pos[1],2));
     float dist_z = fabs((marker_pos[2] + target_height));
 
-    if(dist_xy > ROC_XY || dist_z > ROC_Z || 1)
+    ros::Time t_now = ros::Time::now();
+    ros::Duration delt = t_now - prev_wp_time;
+
+    if(dist_xy > ROC_XY || dist_z > ROC_Z )
     {
       //Sending yaw output to FCU
       float dist_yaw;
@@ -223,8 +229,12 @@ void markerCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
       }
       else
       {
-        sendPositionWithYaw(marker_pos[0], marker_pos[1],
+        if(delt.toSec() > WP_SEND_INTERVAL)
+        {
+          prev_wp_time = t_now;
+          sendPositionWithYaw(marker_pos[0], marker_pos[1],
                             marker_pos[2] + target_height, 0);
+        }
       }
     }
   }
@@ -299,7 +309,7 @@ int main(int argc, char *argv[])
   keyboard_input = boost::make_shared<vk::UserInputThread>();
 
   ros::NodeHandle pnh("~");
-  pnh.param("z", target_height, float(2.0f));
+  pnh.param("z", target_height, float(2.7f));
 
   R_EB_CIB.setRPY(M_PI , 0.0f, -M_PI/2);
   R_CB_CIB_ideal.setRPY(0.0f, 0.0f, 0.0f);
@@ -311,6 +321,8 @@ int main(int argc, char *argv[])
   ROS_INFO("\nTarget height above marker is [%f]", target_height);
   printf("\nKeep the quad over marker aligned with the front and press i\n");
   printf("To bypass calibration press b\n");
+
+  prev_wp_time = ros::Time::now();
 
   ros::Subscriber vslam_sub = n.subscribe("marker_pose", 1, markerCallback);
 //  ros::Subscriber stats_sub = n.subscribe("/mavros/rc/in", 10, statsCallback);
