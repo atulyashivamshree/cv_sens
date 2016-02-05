@@ -27,7 +27,7 @@ private:
   Matrix<double, 5, 5> P_kplus1_k;
   Matrix<double, 5, 5> P_k_k;
 
-  Matrix<double, 1, 1> Q_k;
+  Matrix<double, 5, 5> V_k;
   Matrix<double, 1, 1> W_v;
   Matrix<double, 1, 1> W_u;
 
@@ -35,7 +35,7 @@ private:
   Matrix<double, 5, 1> B_k;
 
   Matrix<double, 5, 5> F_k;
-  Matrix<double, 5, 1> L_k;
+//  Matrix<double, 5, 1> L_k;
   Matrix<double, 1, 5> H_v;
   Matrix<double, 1, 5> H_u;
 

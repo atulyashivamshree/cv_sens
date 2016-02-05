@@ -38,7 +38,6 @@
 #define VISION_BREAKSIGNAL_THRESHOLD    2                       //time to wait before assuming sensor data has been lost
 #define SONAR_LOSS_TIME_THRESHOLD       3                       //time to wait before assuming sensor data has been lost
 
-#define DEBUG_WITH_ROSBAG               1                       //if 1 we are checking the working on a rosbag 0 for realtime operation
 #define SYSTEM_ID                       6
 
 class RollingQueue
@@ -183,6 +182,9 @@ private:
 
   //initialize sonar based on previous measurements
   void initializeSonar(double z, ros::Time stamp);
+
+  //checks whether the computer scale and bias terms are sane
+  bool areScaleBiasSane(float scale, float bias);
 
 public:
 

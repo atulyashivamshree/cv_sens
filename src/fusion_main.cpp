@@ -5,7 +5,7 @@
  *      Author: atulya
  */
 
-#include "sensor_fusion.h"
+#include "cv_sens/sensor_fusion.h"
 
 //----------INITIAL CONFIGURATION---------------
 #define KNOB_CHANNEL 6
@@ -132,7 +132,7 @@ void px4flowCallback(const px_comm::OpticalFlow::ConstPtr& msg)
 
   sensor_fusion.updateSonarData(z, msg->header.stamp);
 
-  if(sensor_fusion.isVSLAMEstimationHealthy() == false && sensor_fusion.isAltitudeHealthy() == true)
+  if(sensor_fusion.isVSLAMEstimationHealthy() == false)
   {
     publishSensPos(msg->header.stamp, sensor_fusion.position.getX(),
                                      sensor_fusion.position.getY(),
@@ -158,7 +158,7 @@ int main(int argc, char *argv[])
   ros::Subscriber stats_sub = n.subscribe("/mavros/rc/in", 10, channelCallback);
   ros::Subscriber rpy_sub = n.subscribe("/mavros/imu/data", 100, imuCallback);
   ros::Subscriber px4flow_sub = n.subscribe("/px4flow/opt_flow", 10, px4flowCallback);
-  ros::Subscriber points_sub = n.subscribe("/svo/points", 20, visualizationMarkerCallback);
+  ros::Subscriber points_sub = n.subscribe("/svo/points", 100, visualizationMarkerCallback);
 
   sensor_fusion.pos_pub_vgnd = n.advertise<geometry_msgs::Vector3Stamped>("cv_pose", 100);
   sensor_fusion.acc_pub_hbf = n.advertise<geometry_msgs::Vector3Stamped>("sens_acc_hbf", 100);

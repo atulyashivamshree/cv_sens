@@ -24,6 +24,7 @@ include(EnableCXX11)
 include(MavrosMavlink)
 
 include_directories(
+  include
   ${catkin_INCLUDE_DIRS}
   ${Eigen_INCLUDE_DIRS}
   ${mavlink_INCLUDE_DIRS}

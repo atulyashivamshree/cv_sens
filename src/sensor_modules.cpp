@@ -5,7 +5,7 @@
  *      Author: atulya
  */
 
-#include "sensor_modules.h"
+#include "cv_sens/sensor_modules.h"
 
 SensorIMU::SensorIMU()
 {
@@ -82,9 +82,10 @@ void SensorCV::correctCameraRotation()
   MatrixXf b = MatrixXf::Zero(GROUND_PLANE_POINTS,1);
   Matrix<float, 3, 1> X;
 
-  std::string meas_filename = "/home/atulya/data/queue.csv";
-  std::ofstream outfile_meas;
-  outfile_meas.open(meas_filename.c_str());
+  // File to store data in case of debugging (Remeber to close the file read)
+//  std::string meas_filename = "/home/atulya/data/queue.csv";
+//  std::ofstream outfile_meas;
+//  outfile_meas.open(meas_filename.c_str());
 
   for(int i=0; i<GROUND_PLANE_POINTS; i++)
   {
@@ -92,7 +93,7 @@ void SensorCV::correctCameraRotation()
     A(i,1) = ground_points[i](1);
     A(i,2) = 1;
     b(i,0) = -ground_points[i](2);
-    outfile_meas<<A(i,0)<<","<<A(i,1)<<","<<A(i,2)<<","<<b(i,0)<<"\n";
+//    outfile_meas<<A(i,0)<<","<<A(i,1)<<","<<A(i,2)<<","<<b(i,0)<<"\n";
   }
 
   //  std::cout<<A.jacobiSvd(ComputeThinU | ComputeThinV).solve(b);
@@ -107,13 +108,13 @@ void SensorCV::correctCameraRotation()
 
   R_calib.setRPY(phi,theta, 0);
 
-  printf("normal is [%f, %f, %f]", normal(0), normal(1), normal(2));
-  printf("depth is %f", depth);
-  ROS_INFO("Roll detected: %f; Pitch detected: %f", phi, theta);
-  outfile_meas.close();
-  ROS_INFO("R is \n[%f, %f, %f]\n[%f, %f, %f]\n[%f, %f, %f]",
-           R_calib.getRow(0).getX(), R_calib.getRow(0).getY(), R_calib.getRow(0).getZ(),
-           R_calib.getRow(1).getX(), R_calib.getRow(1).getY(), R_calib.getRow(1).getZ(),
-           R_calib.getRow(2).getX(), R_calib.getRow(2).getY(), R_calib.getRow(2).getZ());
+  printf("normal is [%.3f, %.3f, %.3f]", normal(0), normal(1), normal(2));
+  printf("depth is %.3f\n", depth);
+  printf("Roll detected: %.3f; Pitch detected: %.3f\n", phi, theta);
+//  outfile_meas.close();
+//  printf("R is \n[%.3f, %.3f, %.3f]\n[%.3f, %.3f, %.3f]\n[%.3f, %.3f, %.3f]",
+//           R_calib.getRow(0).getX(), R_calib.getRow(0).getY(), R_calib.getRow(0).getZ(),
+//           R_calib.getRow(1).getX(), R_calib.getRow(1).getY(), R_calib.getRow(1).getZ(),
+//           R_calib.getRow(2).getX(), R_calib.getRow(2).getY(), R_calib.getRow(2).getZ());
 
 }
