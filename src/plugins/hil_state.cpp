@@ -81,23 +81,23 @@ namespace mavplugin {
 			// Position
 			auto pos_target_msg = boost::make_shared<geometry_msgs::Vector3Stamped>();
 			pos_target_msg->header.stamp = ros::Time::now();
-			pos_target_msg->vector.x = state.lat/10.0f;
-			pos_target_msg->vector.y = state.lon/10.0f;
-			pos_target_msg->vector.z = state.alt/10.0f;
+			pos_target_msg->vector.x = state.lat;
+			pos_target_msg->vector.y = state.lon;
+			pos_target_msg->vector.z = state.alt;
 			pos_target_pub.publish(pos_target_msg);
 
 			auto vel_target_msg = boost::make_shared<geometry_msgs::Vector3Stamped>();
 			vel_target_msg->header.stamp = ros::Time::now();
-			vel_target_msg->vector.x = state.vx/10.0f;
-			vel_target_msg->vector.y = state.vy/10.0f;
-			vel_target_msg->vector.z = state.vz/10.0f;
+			vel_target_msg->vector.x = state.vx;
+			vel_target_msg->vector.y = state.vy;
+			vel_target_msg->vector.z = state.vz;
 			vel_target_pub.publish(vel_target_msg);
 
 			auto accel_target_msg = boost::make_shared<geometry_msgs::Vector3Stamped>();
 			accel_target_msg->header.stamp = ros::Time::now();
-			accel_target_msg->vector.x = state.xacc/10.0f;
-			accel_target_msg->vector.y = state.yacc/10.0f;
-			accel_target_msg->vector.z = state.zacc/10.0f;
+			accel_target_msg->vector.x = state.xacc;
+			accel_target_msg->vector.y = state.yacc;
+			accel_target_msg->vector.z = state.zacc;
 			accel_target_pub.publish(accel_target_msg);
 
 		}
