@@ -15,8 +15,32 @@ void printRotationMatrix(tf::Matrix3x3 R)
                R.getRow(2).getX(), R.getRow(2).getY(), R.getRow(2).getZ());
 }
 
+void Pattern_Tracker::draw3dAxis(aruco::Marker m)
+{
 
-Tracker::Tracker(ros::NodeHandle nh, float z): it(nh)
+    float size= m.ssize*3;
+
+    vector<cv::Point3f> object_points(4, cv::Point3f(0.0, 0.0, 0.0));
+    object_points[1].x = size;
+    object_points[2].y = size;
+    object_points[3].z = size;
+
+    vector<cv::Point2f> image_points;
+    cv::projectPoints( object_points, m.Rvec,m.Tvec, camParam.CameraMatrix, camParam.Distorsion, image_points);
+
+    //draw lines of different colours
+    cv::line(inImage,image_points[0],image_points[1],cv::Scalar(255,0,0,255),1,CV_AA);
+    cv::line(inImage,image_points[0],image_points[2],cv::Scalar(0,255,0,255),1,CV_AA);
+    cv::line(inImage,image_points[0],image_points[3],cv::Scalar(0,0,255,255),1,CV_AA);
+    putText(inImage,"x", image_points[1],cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255,0,0,255),2);
+    putText(inImage,"y", image_points[2],cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0,255,0,255),2);
+    putText(inImage,"z", image_points[3],cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0,0,255,255),2);
+}
+
+
+Pattern_Tracker::Pattern_Tracker(ros::NodeHandle nh, float target_z,
+                                 float marker_size, int marker_id)
+: it(nh)
 {
   R_EB_CIB.setRPY(M_PI , 0.0f, -M_PI/2);
   R_CB_CIB_ideal.setRPY(0.0f, 0.0f, 0.0f);
@@ -25,7 +49,9 @@ Tracker::Tracker(ros::NodeHandle nh, float z): it(nh)
   R_EE_EB.setRPY(0.0f,0.0f, 0.0f);
   R_EE_EM.setRPY(0.0f,0.0f, 0.0f);
 
-  target_height = z;
+  target_height = target_z;             //target height may not be required here
+  marker_size_ = marker_size;
+  marker_id_ = marker_id;
 
   flag_calibration_started = false;
   flag_calibration_image_acquired = false;
@@ -35,15 +61,24 @@ Tracker::Tracker(ros::NodeHandle nh, float z): it(nh)
 
   cam_info_received = false;
 
+  image_sub = it.subscribe("image", 1, &Pattern_Tracker::imageCallback, this);
+  cam_info_sub = nh.subscribe("camera_info", 1, &Pattern_Tracker::camInfoCallback, this);
+  imu_sub = nh.subscribe("/mavros/imu/data", 5, &Pattern_Tracker::imuCallback, this);
+
+  image_pub = it.advertise("result", 1);
+  rpy_imu_pub = nh.advertise<geometry_msgs::Vector3Stamped>("rpy_imu", 100);
+  rpy_cam_pub = nh.advertise<geometry_msgs::Vector3Stamped>("rpy_cam", 100);
+  relative_position_pub = nh.advertise<geometry_msgs::Vector3Stamped>("rel_position_marker", 100);
+
   keyboard_input = boost::make_shared<vk::UserInputThread>();
 }
 
-Tracker::~Tracker()
+Pattern_Tracker::~Pattern_Tracker()
 {
   keyboard_input->stop();
 }
 
-void Tracker::initializeRotation()
+void Pattern_Tracker::initializeRotation()
 {
   R_EE_EM = R_EE_EB;
   flag_calibration_started = true;
@@ -53,7 +88,7 @@ void Tracker::initializeRotation()
                                      phi, theta, psi);
 }
 
-void Tracker::useImageForCalibration()
+void Pattern_Tracker::useImageForCalibration()
 {
 
   double phi_v, theta_v, psi_v;
@@ -76,61 +111,157 @@ void Tracker::useImageForCalibration()
                                        phi_v, theta_v, psi_v);
 }
 
-void Tracker::bypassCalibration()
+void Pattern_Tracker::bypassCalibration()
 {
   flag_calibration_finished = true;
   ROS_INFO("Bypassing calibration: Assuming that camera is vertical");
 }
 
-void Tracker::image_callback(const sensor_msgs::Image::ConstPtr& msg)
+void Pattern_Tracker::transformMarkerPoseToHBFFrame(tf::Matrix3x3 marker_rot, tf::Vector3 marker_pos)
+{
+  R_CB_EM = marker_rot;
+
+  tf::Vector3 r_cb, r_ee, r_ee_ideal, r_ehbf, r_ehbf_ideal, r_em;                                             //position of marker center with respect to the EE frame attached to quad
+  r_cb = marker_pos;
+  t_em_cb = r_cb;
+
+  r_ee = R_EE_EB*R_EB_CIB*R_CB_CIB.transpose()*r_cb;
+  r_ee_ideal = R_EE_EB*R_EB_CIB*R_CB_CIB_ideal.transpose()*r_cb;
+  //  r_em = R_EE_EM.transpose()*R_EE_EB*R_EB_CIB*R_CB_CIB.transpose()*(-1*r_cb);                   //camera with respect to the marker
+
+  r_ehbf = R_EE_EHBF.transpose()*r_ee;
+  r_ehbf_ideal = R_EE_EHBF.transpose()*r_ee_ideal;
+
+  tf::Vector3 t_cb_em = R_CB_EM.transpose()*(-1*t_em_cb);
+  tf::vector3TFToMsg(t_cb_em, relative_position_msg.vector);
+
+//  tf::vector3TFToMsg(r_cb, rpy_imu_msg.vector);
+//  tf::vector3TFToMsg(r_ehbf, rpy_cam_msg.vector);
+
+  //  ROS_INFO("RPY is [%f, %f, %f]", phi_v, theta_v, psi_v);
+  marker_pos_ = r_ehbf;
+
+}
+
+void Pattern_Tracker::updateCalibrationCheck()
+{
+  double phi_v, theta_v, psi_v;
+  double phi, theta, psi;
+
+  tf::Matrix3x3 R_eb_em_from_cam = R_EB_CIB*R_CB_CIB.transpose()*R_CB_EM;
+  R_eb_em_from_cam.transpose().getRPY(phi_v, theta_v, psi_v);   //this actually gives EB to EE RPY
+  //  ROS_INFO("Rotation from camera is [Roll: %f, Pitch: %f, Yaw: %f]",
+  //                                       phi_v, theta_v, psi_v);
+//  rpy_cam_msg.vector.x = phi_v;
+//  rpy_cam_msg.vector.y = theta_v;
+//  rpy_cam_msg.vector.z = psi_v;
+
+  //  ROS_INFO("Rotation matrix R_EB_EE is");
+  //  printRotationMatrix(R_EE_EB.transpose());
+  tf::Matrix3x3 R_eb_em_from_imu = R_EE_EB.transpose()*R_EE_EM;
+  R_eb_em_from_imu.transpose().getRPY(phi, theta, psi);   //this actually gives EB to EE RPY
+  //  ROS_INFO("Rotation from IMU is [Roll: %f, Pitch: %f, Yaw: %f]",
+  //                                     phi, theta, psi);
+
+//  rpy_imu_msg.vector.x = phi;
+//  rpy_imu_msg.vector.y = theta;
+//  rpy_imu_msg.vector.z = psi;
+
+  if(fabs(fabs(psi - psi_v) - (2*M_PI)) < 0.2 )
+  {
+    if(psi<0)
+      psi += 2*M_PI;
+    else
+      psi_v += 2*M_PI;
+  }
+
+  float meas_diff = sqrt(pow((phi_v - phi),2) + pow((theta_v - theta),2) + pow((psi_v - psi),2));
+  //  rpy_imu_msg.vector.y = meas_diff;
+
+  //  ROS_INFO("angle diff IMU and camera : %f, %d, %d", meas_diff, calibration_count, calibration_inlier_count);
+
+  if(flag_calibration_finished == false && flag_calibration_started == true && flag_calibration_image_acquired == true)
+  {
+    if(calibration_count > CALIBRATION_NUM_VARIABLES)
+    {
+      ROS_INFO("CALIBRATION UNSUCCESSFUL : Press C to acquire another image and wait till a success is shown");
+      flag_calibration_image_acquired = false;
+    }
+    calibration_count++;
+    if(meas_diff < CALIBRATION_INLIER_ERR_THRSH)
+      calibration_inlier_count++;
+
+    if(calibration_inlier_count >= CALIBRATION_INLIER_PERCENT/100.0f*CALIBRATION_NUM_VARIABLES)
+    {
+      ROS_INFO("CALIBRATION SUCCESSFUL :\nNow the marker can be freely moved anywhere  (%d of %d are inliers)",
+               calibration_inlier_count, calibration_count);
+      flag_calibration_finished = true;
+    }
+  }
+}
+
+void Pattern_Tracker::imageCallback(const sensor_msgs::Image::ConstPtr& msg)
 {
   if(cam_info_received)
   {
     try
     {
-      inImage = cv_bridge::toCvShare(msg, sensor_msgs::image_encodings::BGR8)->image;
+      inImage = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8)->image;
 
       markers.clear();
       //Ok, let's detect
-      mDetector.detect(inImage, markers, camParam, marker_size, false);
+//      ROS_INFO("TIC");
+      mDetector.detect(inImage, markers, camParam, marker_size_, false);
+//      ROS_INFO("TOC");
 
       for(size_t i=0; i<markers.size(); ++i)
       {
         // only publishing the selected marker
-        if(markers[i].id == marker_id)
+        if(markers[i].id == marker_id_)
         {
-//          tf::Transform transform = aruco_ros::arucoMarker2Tf(markers[i]);
-//          tf::StampedTransform cameraToReference;
-//          cameraToReference.setIdentity();
+          cv::Mat rot(3, 3, CV_32FC1);
+          cv::Rodrigues(markers[i].Rvec, rot);
+          cv::Mat tran = markers[i].Tvec;
 
-//          geometry_msgs::PoseStamped poseMsg;
-//          tf::poseTFToMsg(transform, poseMsg.pose);
-//          poseMsg.header.frame_id = reference_frame;
-//          poseMsg.header.stamp = curr_stamp;
+          tf::Matrix3x3 tf_rot(rot.at<float>(0,0), rot.at<float>(0,1), rot.at<float>(0,2),
+                               rot.at<float>(1,0), rot.at<float>(1,1), rot.at<float>(1,2),
+                               rot.at<float>(2,0), rot.at<float>(2,1), rot.at<float>(2,2));
+          tf::Vector3 tf_orig(tran.at<float>(0,0), tran.at<float>(1,0), tran.at<float>(2,0));
+          tf::Transform transform(tf_rot, tf_orig);
 
-//          pose_pub.publish(poseMsg);
+//          ROS_INFO("Rotation matrix R_CB_EM from aruco raw is");
+//          printRotationMatrix(tf_rot);
+
+          //update a flag to indicate that a new marker has been received
+          flag_new_marker_received = true;
+
+          //transform marker coordinates to HBF frame
+          transformMarkerPoseToHBFFrame(tf_rot, tf_orig);
+
+          //check whether the calibration steps have been completed
+          updateCalibrationCheck();
 
         }
         //Draw a boundary around each detected pattern
         markers[i].draw(inImage,cv::Scalar(0,0,255),2);
-
-        //draw a 3d cube in each marker if there is 3d info
-        if(camParam.isValid() && marker_size!=-1)
-        {
-          for(size_t i=0; i<markers.size(); ++i)
-          {
-//            CvDrawingUtils::draw3dAxis(inImage, markers[i], camParam);
-          }
-        }
-
-        //show input with augmented information
-//                 cv_bridge::CvImage out_msg;
-//                 out_msg.header.stamp = curr_stamp;
-//                 out_msg.encoding = sensor_msgs::image_encodings::RGB8;
-//                 out_msg.image = inImage;
-//                 image_pub.publish(out_msg.toImageMsg());
-
       }
+
+      //draw a 3d cube in each marker if there is 3d info
+      if(camParam.isValid() && marker_size_!=-1)
+      {
+        for(size_t i=0; i<markers.size(); ++i)
+        {
+          draw3dAxis(markers[i]);
+        }
+      }
+
+      //show input with augmented information
+      cv_bridge::CvImage out_msg;
+      out_msg.header.stamp = msg->header.stamp;
+      out_msg.encoding = sensor_msgs::image_encodings::RGB8;
+      out_msg.image = inImage;
+      image_pub.publish(out_msg.toImageMsg());
+
     }
     catch (cv_bridge::Exception& e)
     {
@@ -141,7 +272,7 @@ void Tracker::image_callback(const sensor_msgs::Image::ConstPtr& msg)
 }
 
 // wait for one camerainfo, then shut down that subscriber
-void Tracker::cam_info_callback(const sensor_msgs::CameraInfo &cam_info)
+void Pattern_Tracker::camInfoCallback(const sensor_msgs::CameraInfo &cam_info)
 {
   cv::Mat cameraMatrix(3, 3, CV_32FC1);
   cv::Mat distorsionCoeff(4, 1, CV_32FC1);
@@ -164,119 +295,37 @@ void Tracker::cam_info_callback(const sensor_msgs::CameraInfo &cam_info)
 
   camParam = aruco::CameraParameters(cameraMatrix, distorsionCoeff, size);
 
-//  // handle cartesian offset between stereo pairs
-//  // see the sensor_msgs/CamaraInfo documentation for details
-//  rightToLeft.setIdentity();
-//  rightToLeft.setOrigin(
-//      tf::Vector3(
-//          -msg.P[3]/msg.P[0],
-//          -msg.P[7]/msg.P[5],
-//          0.0));
+  ROS_INFO("Camera parameters received");
+  std::cout<<"Camera matrix is "<<cameraMatrix<<"\n";
+  std::cout<<"distortion is "<<distorsionCoeff<<"\n";
+  std::cout<<"size is "<<size<<"\n";
 
   cam_info_received = true;
   cam_info_sub.shutdown();
 }
 
-void Tracker::markerCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
+void Pattern_Tracker::markerCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
 {
-  double phi_v, theta_v, psi_v;
-  double phi, theta, psi;
-
-  tf::Matrix3x3 R_aruco_correction;
+  tf::Matrix3x3 R_aruco_correction, R_aruco_single;
   tf::Quaternion q;
   tf::quaternionMsgToTF(msg->pose.orientation, q);
-  R_CB_EM.setRotation(q);
+  R_aruco_single.setRotation(q);
   R_aruco_correction.setRPY(M_PI/2, 0, M_PI);
-  R_CB_EM = R_CB_EM*R_aruco_correction;             // In aruco_ros package; file aruco_ros_utils.cpp has a function
+  R_aruco_single = R_aruco_single*R_aruco_correction;             // In aruco_ros package; file aruco_ros_utils.cpp has a function
                                                     //arucoMarker2Tf which multiplies the rotation matrix by this value
                                                     // before publishing it. Hence the correction is applied here
 
-//  ROS_INFO("Rotation matrix R_CB_EM is");
-//  printRotationMatrix(R_CB_EM);
-  tf::Matrix3x3 R_eb_em_from_cam = R_EB_CIB*R_CB_CIB.transpose()*R_CB_EM;
-  R_eb_em_from_cam.transpose().getRPY(phi_v, theta_v, psi_v);   //this actually gives EB to EE RPY
-//  ROS_INFO("Rotation from camera is [Roll: %f, Pitch: %f, Yaw: %f]",
-//                                       phi_v, theta_v, psi_v);
-//  rpy_cam_msg.vector.x = phi_v;
-//  rpy_cam_msg.vector.y = theta_v;
-//  rpy_cam_msg.vector.z = psi_v;
-
-//  ROS_INFO("Rotation matrix R_EB_EE is");
-//  printRotationMatrix(R_EE_EB.transpose());
-  tf::Matrix3x3 R_eb_em_from_imu = R_EE_EB.transpose()*R_EE_EM;
-  R_eb_em_from_imu.transpose().getRPY(phi, theta, psi);   //this actually gives EB to EE RPY
-//  ROS_INFO("Rotation from IMU is [Roll: %f, Pitch: %f, Yaw: %f]",
-//                                     phi, theta, psi);
-
-//  rpy_imu_msg.vector.x = phi;
-//  rpy_imu_msg.vector.y = theta;
-//  rpy_imu_msg.vector.z = psi;
-
-  if(fabs(fabs(psi - psi_v) - (2*M_PI)) < 0.2 )
-  {
-    if(psi<0)
-      psi += 2*M_PI;
-    else
-      psi_v += 2*M_PI;
-  }
-
-  float meas_diff = sqrt(pow((phi_v - phi),2) + pow((theta_v - theta),2) + pow((psi_v - psi),2));
-//  rpy_imu_msg.vector.y = meas_diff;
-
-//  ROS_INFO("angle diff IMU and camera : %f, %d, %d", meas_diff, calibration_count, calibration_inlier_count);
-
-  if(flag_calibration_finished == false && flag_calibration_started == true && flag_calibration_image_acquired == true)
-  {
-    if(calibration_count > CALIBRATION_NUM_VARIABLES)
-    {
-      ROS_INFO("CALIBRATION UNSUCCESSFUL : Press C to acquire another image and wait till a success is shown");
-      flag_calibration_image_acquired = false;
-    }
-    calibration_count++;
-    if(meas_diff < CALIBRATION_INLIER_ERR_THRSH)
-      calibration_inlier_count++;
-
-    if(calibration_inlier_count >= CALIBRATION_INLIER_PERCENT/100.0f*CALIBRATION_NUM_VARIABLES)
-    {
-      ROS_INFO("CALIBRATION SUCCESSFUL :\nNow the marker can be freely moved anywhere  (%d of %d are inliers)",
-               calibration_inlier_count, calibration_count);
-      flag_calibration_finished = true;
-    }
-  }
-
-  tf::Vector3 r_cb, r_ee, r_ee_ideal, r_ehbf, r_ehbf_ideal, r_em;                                             //position of marker center with respect to the EE frame attached to quad
-  tf::pointMsgToTF(msg->pose.position, r_cb);
-  r_ee = R_EE_EB*R_EB_CIB*R_CB_CIB.transpose()*r_cb;
-  r_ee_ideal = R_EE_EB*R_EB_CIB*R_CB_CIB_ideal.transpose()*r_cb;
-//  r_em = R_EE_EM.transpose()*R_EE_EB*R_EB_CIB*R_CB_CIB.transpose()*(-1*r_cb);                   //camera with respect to the marker
-
-  r_ehbf = R_EE_EHBF.transpose()*r_ee;
-  r_ehbf_ideal = R_EE_EHBF.transpose()*r_ee_ideal;
-  rpy_imu_msg.vector.x = r_cb.getX();
-  rpy_imu_msg.vector.y = r_cb.getY();
-  rpy_imu_msg.vector.z = r_cb.getZ();
-////  ROS_INFO("desired position is [%f, %f, %f]", r_ehbf.getX(), r_ehbf.getY(), r_ehbf.getZ());
-//  rpy_imu_msg.vector.x = r_ehbf_ideal.getX();
-//  rpy_imu_msg.vector.y = r_ehbf_ideal.getY();
-//  rpy_imu_msg.vector.z = r_ehbf_ideal.getZ();
-
-  rpy_cam_msg.vector.x = r_ehbf.getX();
-  rpy_cam_msg.vector.y = r_ehbf.getY();
-  rpy_cam_msg.vector.z = r_ehbf.getZ();
-
-//  ROS_INFO("RPY is [%f, %f, %f]", phi_v, theta_v, psi_v);
-  marker_pos[0] = r_ehbf.getX();
-  marker_pos[1] = r_ehbf.getY();
-  marker_pos[2] = r_ehbf.getZ();
+  ROS_INFO("Rotation matrix from aruco is");
+  printRotationMatrix(R_aruco_single);
 
 }
 
-bool Tracker::isCalibrationFinished()
+bool Pattern_Tracker::isCalibrationFinished() const
 {
   return flag_calibration_finished;
 }
 
-void Tracker::imuCallback(const sensor_msgs::Imu::ConstPtr& msg)
+void Pattern_Tracker::imuCallback(const sensor_msgs::Imu::ConstPtr& msg)
 {
   double phi, theta, psi;
 
@@ -291,7 +340,7 @@ void Tracker::imuCallback(const sensor_msgs::Imu::ConstPtr& msg)
 }
 
 
-void Tracker::processUserAction()
+void Pattern_Tracker::processUserAction()
 {
   if(keyboard_input!= NULL)
   {
@@ -315,11 +364,30 @@ void Tracker::processUserAction()
   }
 }
 
-
-void Tracker::publishDebugMessages()
+tf::Vector3 Pattern_Tracker::getCameraPosInMarkerFrame() const
 {
+  tf::Vector3 t_cb_em = R_CB_EM*(-1*t_em_cb);
+  return t_cb_em;
+}
+
+tf::Vector3 Pattern_Tracker::getDesiredMovementToReachTarget(tf::Vector3 pos_target) const
+{
+  tf::Vector3 r_cb = R_CB_EM*pos_target + t_em_cb;
+  tf::Vector3 r_ee = R_EE_EB*R_EB_CIB*R_CB_CIB.transpose()*r_cb;
+  tf::Vector3 r_ehbf = R_EE_EHBF.transpose()*r_ee;
+
+  return r_ehbf;
+}
+
+
+void Pattern_Tracker::publishDebugMessages()
+{
+  ros::Time stamp = ros::Time::now();
+  rpy_imu_msg.header.stamp = stamp;
+  rpy_cam_msg.header.stamp = stamp;
+  relative_position_msg.header.stamp = stamp;
+
   rpy_cam_pub.publish(rpy_cam_msg);
-  rpy_imu_msg.header.stamp = ros::Time::now();
-  rpy_cam_msg.header.stamp = ros::Time::now();
   rpy_imu_pub.publish(rpy_imu_msg);
+  relative_position_pub.publish(relative_position_msg);
 }
