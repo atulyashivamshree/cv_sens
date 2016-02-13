@@ -13,14 +13,16 @@ ros::Publisher position_pub;
 
 int main(int argc, char *argv[])
 {
-  ros::init(argc, argv, "setpoint_enu");
+  ros::init(argc, argv, "dummy_pose_publisher");
   ros::NodeHandle n;
 
+  //some dummy position values
   float px = 1, py = 2 , pz = 3;
 
   ros::Rate loop_rate(20);
   position_pub = n.advertise<geometry_msgs::PoseStamped>("/mavros/vision_pose/pose", 200);
 
+  //sending 0 rotation and dummy position values through a position message
   pose_msg.pose.orientation.w = 1;
   pose_msg.pose.orientation.x = 0;
   pose_msg.pose.orientation.y = 0;
