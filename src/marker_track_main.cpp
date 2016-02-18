@@ -15,8 +15,8 @@
 
 //TODO remove unnecessary topics
 
-#define ROC_XY                          0.5
-#define ROC_Z                           0.3
+#define ROC_XY                          0.7
+#define ROC_Z                           0.6
 #define ROC_YAW                         15*M_PI/180.0
 #define WP_TIME_DIFF                    4
 

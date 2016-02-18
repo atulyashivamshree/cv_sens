@@ -16,7 +16,8 @@
 
 //--------------Variables for sending resets to SVO---------
 //All the channel variables used for sending reset and other signals
-#define CHANNEL_MID (CHANNEL_MAX + CHANNEL_MIN)/2
+//#define CHANNEL_MID (CHANNEL_MAX + CHANNEL_MIN)/2
+#define CHANNEL_MID 2050
 float chnl_switching = 0;
 float chnl_original;
 float chnl_switching_cutoff_freq = 0.6;
