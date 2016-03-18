@@ -366,7 +366,7 @@ void Pattern_Tracker::processUserAction()
 
 tf::Vector3 Pattern_Tracker::getCameraPosInMarkerFrame() const
 {
-  tf::Vector3 t_cb_em = R_CB_EM*(-1*t_em_cb);
+  tf::Vector3 t_cb_em = R_CB_EM.transpose()*(-1*t_em_cb);
   return t_cb_em;
 }
 
