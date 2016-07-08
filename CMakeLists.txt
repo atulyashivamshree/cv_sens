@@ -44,6 +44,7 @@ add_library(mavros_debug
 	 src/plugins/sim_state.cpp
 	 src/plugins/attitude.cpp
 	 src/plugins/local_position_ned.cpp
+	 src/plugins/vision_pose_ned.cpp
 	 )
 target_link_libraries(mavros_debug ${catkin_LIBRARIES} ${mavros_LIBRARIES})
 
@@ -56,5 +57,5 @@ target_link_libraries(setpoint_enu   ${catkin_LIBRARIES} )
 add_executable(trak_marker src/marker_track_main.cpp src/pattern_track.cpp)
 target_link_libraries(trak_marker   ${catkin_LIBRARIES} )
 
-add_executable(dummy_visionpose_publisher src/dummy_position.cpp)
-target_link_libraries(dummy_visionpose_publisher   ${catkin_LIBRARIES} )
+add_executable(dummy_vision_pose src/dummy_position.cpp)
+target_link_libraries(dummy_vision_pose   ${catkin_LIBRARIES} )

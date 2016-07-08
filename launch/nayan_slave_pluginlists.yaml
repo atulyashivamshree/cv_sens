@@ -7,6 +7,8 @@ plugin_blacklist:
 # extras
 - image_pub
 - 'mocap_*'
+- vision_pose_estimate
+- vision_speed_estimate
 - px4flow
 - distance_sensor
 - vibration
