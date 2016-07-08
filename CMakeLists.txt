@@ -17,7 +17,6 @@ find_package(catkin REQUIRED COMPONENTS
   mavros
   mavros_msgs
   visualization_msgs
-  vikit_common
   aruco
 )
 SET(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/CMakeModules/")
@@ -53,9 +52,6 @@ target_link_libraries(position_fusion   ${catkin_LIBRARIES} ${mavros_LIBRARIES})
 
 add_executable(setpoint_enu src/setpoint.cpp)
 target_link_libraries(setpoint_enu   ${catkin_LIBRARIES} )
-
-add_executable(trak_marker src/marker_track_main.cpp src/pattern_track.cpp)
-target_link_libraries(trak_marker   ${catkin_LIBRARIES} )
 
 add_executable(dummy_vision_pose src/dummy_position.cpp)
 target_link_libraries(dummy_vision_pose   ${catkin_LIBRARIES} )
