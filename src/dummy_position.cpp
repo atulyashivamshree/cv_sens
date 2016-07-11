@@ -51,7 +51,7 @@ void publishSensorPos(ros::Time stamp, float x, float y, float z,
 
 int main(int argc, char *argv[])
 {
-  ros::init(argc, argv, "setpoint_enu");
+  ros::init(argc, argv, "dummy_pos");
   ros::NodeHandle n;
   position_pub = n.advertise<geometry_msgs::PoseStamped>("/mavros/vision_pose_ned/pose", 200);
 

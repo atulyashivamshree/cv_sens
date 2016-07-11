@@ -56,7 +56,17 @@ private:
         double roll, pitch, yaw;
         tf::quaternionMsgToTF(pose_msg->pose.orientation, q);
         R.setRotation(q);
-        R.getRPY(roll, pitch, yaw);
+
+        //assuming a normalized quaternion is within the range of 1+-0.01
+        if(fabs(q.length()-1) < 1.0e-2)
+          R.getRPY(roll, pitch, yaw);
+        else
+        {
+          ROS_WARN("Quaternion in the Vision_pose_ned message not normalized");
+          roll = 0.0f;
+          pitch = 0.0f;
+          yaw = 0.0f;
+        }
 
         mavlink_msg_vision_position_estimate_pack_chan(UAS_PACK_CHAN(uas), &msg,
                  pose_msg->header.stamp.toNSec()/1000L,
