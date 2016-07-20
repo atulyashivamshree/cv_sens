@@ -17,7 +17,7 @@
 //--------------Variables for sending resets to SVO---------
 //All the channel variables used for sending reset and other signals
 //#define CHANNEL_MID (CHANNEL_MAX + CHANNEL_MIN)/2
-#define CHANNEL_MID 2050
+#define CHANNEL_MID 1600
 float chnl_switching = 0;
 float chnl_original;
 float chnl_switching_cutoff_freq = 0.6;
@@ -36,39 +36,43 @@ bool SVO_RESET_SENT = false;
 SensorFusion sensor_fusion;
 
 //This function is the final link that sends current position estimates and yaw estimate to the flight control unit
-void publishSensPos(ros::Time stamp, float x, float y, float z, float psi, bool flag_cv_active)
+/**
+ * @brief sends the current position and yaw estimate in NED frame to the flight controller
+ * @param stamp current timestamp obtained from ROS
+ * @param x coordinate in metres
+ * @param y coordinate in metres
+ * @param z coordinate in metres
+ * @param yaw yaw angle in radians
+ * @param flag_cv_active if true indicates that XYZ estimates are active, if false
+ *             indicates that computer vision estimates for XY are inactive and only
+ *             Z coordinates from sonar are good
+ */
+void publishSensorPos(ros::Time stamp, float x, float y, float z,
+                      float yaw, bool flag_cv_active)
 {
   tf::Matrix3x3 R;
-  /*FIXME BUG in UAS
-   * Transformation in Eigen/Geometry near mat.eulerAngles it has been stated
-   * the returned angles are in the range [0:pi]x[-pi:pi]x[-pi:pi]
-   * In quaternion_to_rpy() present in the file uas_quaternion_utils.cpp in the folder
-   * mavros/mavros/src/lib the function mat.eulerAngles has been used to obtain YPR in
-   * the order 2,1,0
-   * So the yaw obtained is in the range is in [0 pi] which causes a bug
-   * Hence the yaw obtained inside the FCU code is in range of [0 pi] which is wrong coz
-   * -pi/2 was represented as pi/2
-   * So now the yaw angle is sent as roll angle and similarly in FCU the cv yaw is assigned
-   * to the roll angle
-   * WARNING: Do not send anything through this message without cross-checking
-   */
 
   if(flag_cv_active)
-    R.setRPY(psi,0,-1);                 //Hard coded similar thing on HLP implyinng CV is active
+    R.setRPY(1.0f, 0.0f, yaw);              //Hard coded similar thing on HLP implyinng CV is active
   else
-    R.setRPY(psi,0,-1.35);              //Hard coded similar thing on HLP implying CV in inactive
+    R.setRPY(0.0f, 0.0f, yaw);              //Hard coded similar thing on HLP implying CV in inactive
 
   tf::Quaternion q;
   R.getRotation(q);
-  tf::quaternionTFToMsg(q, sensor_fusion.cv_pose_msg.pose.orientation);
 
-  sensor_fusion.cv_pose_msg.header.stamp = stamp;
-  sensor_fusion.cv_pose_msg.pose.position.x = x;
-  sensor_fusion.cv_pose_msg.pose.position.y = y;
-  sensor_fusion.cv_pose_msg.pose.position.z = z;
+  // copy the position and orientation to the pose message
+  geometry_msgs::PoseStamped pose_msg;
+  tf::quaternionTFToMsg(q, pose_msg.pose.orientation);
+  pose_msg.header.stamp = stamp;
+  pose_msg.pose.position.x = x;
+  pose_msg.pose.position.y = y;
+  pose_msg.pose.position.z = z;
+
+  sensor_fusion.cv_pose_msg = pose_msg;
 
   sensor_fusion.cv_pose_pub.publish(sensor_fusion.cv_pose_msg);
 }
+
 
 //Use this if you want to take some action on the basis of some input from a channel oon the transmitter
 void channelCallback(const mavros_msgs::RCIn::ConstPtr& msg)
@@ -116,30 +120,38 @@ void vslamCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg
 {
   sensor_fusion.updateVSLAMData(msg);
 
+  Vector3f pos_ned;
+  float psi_ned;
+
+  // Converting position from NWU to NED
+  pos_ned(0) = sensor_fusion.position.getX();
+  pos_ned(1) = -sensor_fusion.position.getY();
+  pos_ned(2) = -sensor_fusion.position.getZ();
+  psi_ned = -sensor_fusion.psi;
+
   //check if lambda has been estimated and the camera rotation corrected
   if(sensor_fusion.isVSLAMEstimationHealthy())
   {
-    publishSensPos(msg->header.stamp, sensor_fusion.position.getX(),
-                                     sensor_fusion.position.getY(),
-                                     sensor_fusion.position.getZ(),
-                                     sensor_fusion.psi,
-                                     true);
+    publishSensorPos(msg->header.stamp, pos_ned(0), pos_ned(1), pos_ned(2), psi_ned, true);
   }
 }
 
 void px4flowCallback(const px_comm::OpticalFlow::ConstPtr& msg)
 {
   float z = msg->ground_distance;
-
   sensor_fusion.updateSonarData(z, msg->header.stamp);
+
+  Vector3f pos_ned;
+  float psi_ned;
+  // Converting position from NWU to NED
+  pos_ned(0) = sensor_fusion.position.getX();
+  pos_ned(1) = -sensor_fusion.position.getY();
+  pos_ned(2) = -sensor_fusion.position.getZ();
+  psi_ned = -sensor_fusion.psi;
 
   if(sensor_fusion.isVSLAMEstimationHealthy() == false)
   {
-    publishSensPos(msg->header.stamp, sensor_fusion.position.getX(),
-                                     sensor_fusion.position.getY(),
-                                     sensor_fusion.position.getZ(),
-                                     sensor_fusion.psi,
-                                      false);
+    publishSensorPos(msg->header.stamp, pos_ned(0), pos_ned(1), pos_ned(2), psi_ned, false);
     //For Debugging
 //    publishSensPos(msg->header.stamp, 0, -3.4*sin(M_PI*tmp_count), ekf_z.x_hat_kplus1_kplus1(0,0), M_PI*5/6);
   }

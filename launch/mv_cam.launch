@@ -10,16 +10,18 @@
     <arg name="frame_id" default="$(arg camera)"/>
     <arg name="calib_url" default="file://${ROS_HOME}/camera_info/$(arg camera_name).yaml"/>
     <arg name="fps" default="$(arg rate)"/>
-    <arg name="color" default="false"/>
-    <arg name="aec" default="0"/>
-    <arg name="cbm" default="false"/>
+
+    <arg name="idpf" default="0"/>
+    <arg name="aec" default="false"/>
+    <arg name="expose_us" default="1000"/>
+    <arg name="agc" default="true"/>
+    <arg name="gain_db" default="0.0"/>
+    <arg name="cbm" default="0"/>
     <arg name="ctm" default="1"/>
     <arg name="dcfm" default="0"/>
     <arg name="hdr" default="false"/>
     <arg name="wbp" default="-1"/>
-    <arg name="expose_us" default="1000"/>
-    <arg name="gain_db" default="0.0"/>
-    <arg name="boost" default="false"/>
+    <arg name="request" default="0"/>
     <arg name="mm" default="0"/>
     <arg name="jpeg_quality" default="80"/>
 
@@ -30,29 +32,30 @@
     <arg name="calib" default="false"/>
 
     <!-- Node -->
-    <node pkg="bluefox2" type="single_node" name="$(arg camera)" output="$(arg output)">
+    <node pkg="bluefox2" type="bluefox2_single_node" name="$(arg camera)" output="$(arg output)">
         <param name="identifier" type="string" value="$(arg serial)"/>
         <param name="frame_id" type="string" value="$(arg frame_id)"/>
         <param name="camera_name" type="string" value="$(arg camera_name)"/>
         <param name="calib_url" type="string" value="$(arg calib_url)"/>
         <param name="fps" type="double" value="$(arg fps)"/>
-        <param name="color" type="bool" value="$(arg color)"/>
-        <param name="aec" type="int" value="$(arg aec)"/>
-        <param name="cbm" type="bool" value="$(arg cbm)"/>
+        <param name="idpf" type="int" value="$(arg idpf)"/>
+        <param name="aec" type="bool" value="$(arg aec)"/>
+        <param name="expose_us" type="int" value="$(arg expose_us)"/>
+        <param name="agc" type="bool" value="$(arg aec)"/>
+        <param name="gain_db" type="double" value="$(arg gain_db)"/>
+        <param name="cbm" type="int" value="$(arg cbm)"/>
         <param name="ctm" type="int" value="$(arg ctm)"/>
         <param name="dcfm" type="int" value="$(arg dcfm)"/>
         <param name="hdr" type="bool" value="$(arg hdr)"/>
         <param name="wbp" type="int" value="$(arg wbp)"/>
-        <param name="expose_us" type="int" value="$(arg expose_us)"/>
-        <param name="gain_db" type="double" value="$(arg gain_db)"/>
-        <param name="boost" type="bool" value="$(arg boost)"/>
+        <param name="request" type="int" value="$(arg request)"/>
         <param name="mm" type="int" value="$(arg mm)"/>
         <param name="image_raw/compressed/jpeg_quality" type="int" value="$(arg jpeg_quality)"/>
     </node>
 
     <!-- Proc -->
     <node if="$(arg proc)"
-        pkg="image_proc" type="image_proc" name="image_proc" ns="$(arg node)">
+        pkg="image_proc" type="image_proc" name="image_proc" ns="$(arg camera)">
     </node>
 
     <!-- View -->
@@ -75,6 +78,4 @@
             image:=/$(arg camera)/image_raw camera:=/$(arg camera)">
         </node>
     </group>
-
-	<remap from="/camera/image"  to="/mv_26804127/image_raw"/>
 </launch>

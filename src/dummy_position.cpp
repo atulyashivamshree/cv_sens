@@ -56,13 +56,13 @@ int main(int argc, char *argv[])
   position_pub = n.advertise<geometry_msgs::PoseStamped>("/mavros/vision_pose_ned/pose", 200);
 
   ros::NodeHandle pnh("~");
-  float px = 1, py = 2 , pz = 3;
+  float px = 3, py = 2 , pz = -1;
   float roll, pitch, yaw;
   int rate;
 
-  pnh.param("x", px, float(1.0f));
+  pnh.param("x", px, float(3.0f));
   pnh.param("y", py, float(2.0f));
-  pnh.param("z", pz, float(3.0f));
+  pnh.param("z", pz, float(-1.0f));
   pnh.param("yaw", yaw, float(1.5f));
   pnh.param("rate", rate, int(20));
 

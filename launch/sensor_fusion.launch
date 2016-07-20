@@ -1,5 +1,5 @@
 <launch>
 	<node name="position_fusion_svo" pkg="cv_sens" type="position_fusion" output="screen" respawn="true">
-        	<remap from="sens_pose" to="/mavros/vision_pose/pose" />
+        	<remap from="sens_pose" to="/mavros/vision_pose_ned/pose" />
     	</node>
 </launch>

@@ -277,7 +277,7 @@ void SensorFusion::updateIMUData(const sensor_msgs::Imu::ConstPtr& msg)
 
   tf::Vector3 g(0,0,-GRAVITY_MSS);      //the gravity vector
 
-  accel_hbf = R_b_to_HBF*imu.a_b + g;       //acceleration as obtained in the horizontal body frame and in NED coordinate system
+  accel_hbf = R_b_to_HBF*imu.a_b + g;       //acceleration as obtained in the horizontal body frame and in TODO NED coordinate system (CHECK should be NWU also replace all ENU with NWU shere possible)
 
   if(ekf_z.x_hat_kplus1_kplus1(0,0) > 0.3 && ekf_z.x_hat_kplus1_kplus1(0,0) < 4.5 )             // the absolute lower limit possible for ultrasonic sensors
   {
