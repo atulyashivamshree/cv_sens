@@ -17,7 +17,6 @@ find_package(catkin REQUIRED COMPONENTS
   mavros
   mavros_msgs
   visualization_msgs
-  aruco
 )
 SET(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/CMakeModules/")
 find_package(Eigen REQUIRED)

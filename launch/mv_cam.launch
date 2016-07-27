@@ -11,7 +11,7 @@
     <arg name="calib_url" default="file://${ROS_HOME}/camera_info/$(arg camera_name).yaml"/>
     <arg name="fps" default="$(arg rate)"/>
 
-    <arg name="idpf" default="0"/>
+    <arg name="idpf" default="2"/>
     <arg name="aec" default="false"/>
     <arg name="expose_us" default="1000"/>
     <arg name="agc" default="true"/>

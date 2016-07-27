@@ -23,7 +23,7 @@
 #include "ekf.h"
 #include "sensor_modules.h"
 
-#define ROLLING_FILTER_WINDOW           40
+#define ROLLING_FILTER_WINDOW           30
 #define IMU_FREQUENCY                   52.5f
 #define DEFAULT_HEIGHT                  0.8f
 #define SONAR_INITIALIZATION_MAX_HEIGHT 1.2f
@@ -32,7 +32,7 @@
 #define MAX_BUFFER_SIZE                 150
 #define STD_DEV_THRESHOLD               0.18f
 #define DATA_DELAY                      6
-#define SONAR_DELTA_READING_MAX         0.6f
+#define SONAR_DELTA_READING_MAX         0.4f
 
 #define IMU_LOSS_THRESHOLD              0.5f
 #define VISION_BREAKSIGNAL_THRESHOLD    2                       //time to wait before assuming sensor data has been lost

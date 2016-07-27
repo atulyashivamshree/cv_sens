@@ -149,7 +149,7 @@ void RollingQueue::insert(float z)
 {
   if(is_full == true)
   {
-    //TODO make it rolling so as to increase the window
+    //TODO change start and end to make it truly rolling so as to increase the window
     for(int i=0; i<size-1; i++)
       rolling_q[i] = rolling_q[i+1];
     rolling_q[end] = z;
@@ -354,7 +354,6 @@ bool SensorFusion::isSonarDataOutlier(double z)
 
 void SensorFusion::resetSonar()
 {
-//  TODO cross check with a working case
   sonar_queue.reset();
   flags.ekf_prediction_enabled = false;
   ROS_DEBUG("disabling ekf prediction sonar");
