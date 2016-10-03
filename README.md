@@ -1,5 +1,10 @@
 
 Fuses data from VSLAM Sonar and IMU to provide metric state measurements on the Nayan quadcopter platform. More details on the Nayan quadcopter can be found on [nayan_wiki](http://aus.co.in/wiki/Main_Page)
+
+## Compatibility:
+* `v0.1` - works with v0.1 of nayan_slave_firmware and present in nayan_v2015 branch Does not work with mavros version after Mar 2016
+* `v0.2.2` - Last tested version of code on Nayan-NUC, Inforce, Odroid boards. Works with `v0.2` of nayan_slave_firmware and the master branch
+
 ## Organization: 
 
 This package contains the following modules 
