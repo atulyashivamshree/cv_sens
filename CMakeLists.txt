@@ -9,12 +9,14 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   std_msgs
   geometry_msgs	
+  tf
+  cv_bridge
+  image_transport
   pluginlib
   px_comm
   mavros
   mavros_msgs
   visualization_msgs
-  vikit_common
 )
 SET(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/CMakeModules/")
 find_package(Eigen REQUIRED)
@@ -40,6 +42,7 @@ add_library(mavros_debug
 	 src/plugins/sim_state.cpp
 	 src/plugins/attitude.cpp
 	 src/plugins/local_position_ned.cpp
+	 src/plugins/vision_pose_ned.cpp
 	 )
 target_link_libraries(mavros_debug ${catkin_LIBRARIES} ${mavros_LIBRARIES})
 
@@ -49,8 +52,5 @@ target_link_libraries(position_fusion   ${catkin_LIBRARIES} ${mavros_LIBRARIES})
 add_executable(setpoint_enu src/setpoint.cpp)
 target_link_libraries(setpoint_enu   ${catkin_LIBRARIES} )
 
-add_executable(trak_marker src/marker_track.cpp)
-target_link_libraries(trak_marker   ${catkin_LIBRARIES} )
-
-add_executable(dummy_visionpose_publisher src/dummy_position.cpp)
-target_link_libraries(dummy_visionpose_publisher   ${catkin_LIBRARIES} )
+add_executable(dummy_vision_pose src/dummy_position.cpp)
+target_link_libraries(dummy_vision_pose   ${catkin_LIBRARIES} )

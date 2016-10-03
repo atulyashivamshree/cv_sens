@@ -1,0 +1,10 @@
+<launch>
+
+	<node name="aruco_tracker" pkg="cv_sens" type="trak_marker" output="screen" clear_params="true">
+		<rosparam command="load" file="$(find cv_sens)/launch/marker_trajectory.yaml" />
+		<remap from="image" to="/mv_26804182/image_raw" />
+		<remap from="camera_info" to="/mv_26804182/camera_info" />
+		<remap from="marker_pose" to="/aruco_single/pose"/>
+		<remap from="waypoint" to="/mavros/setpoint_position/local"/>
+    	</node>
+</launch>

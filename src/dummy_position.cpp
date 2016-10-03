@@ -7,39 +7,74 @@
 
 #include "ros/ros.h"
 #include "geometry_msgs/PoseStamped.h"
+#include <tf/transform_datatypes.h>
+#include <tf/tf.h>
 
 geometry_msgs::PoseStamped pose_msg;
 ros::Publisher position_pub;
 
+//This function is the final link that sends current position estimates and yaw estimate to the flight control unit
+/**
+ * @brief sends the current position and yaw estimate to the flight controller
+ * @param stamp current timestamp obtained from ROS
+ * @param x coordinate in metres
+ * @param y coordinate in metres
+ * @param z coordinate in metres
+ * @param yaw yaw angle in radians
+ * @param flag_cv_active if true indicates that XYZ estimates are active, if false
+ *             indicates that computer vision estimates for XY are inactive and only
+ *             Z coordinates from sonar are good
+ */
+void publishSensorPos(ros::Time stamp, float x, float y, float z,
+                      float yaw, bool flag_cv_active)
+{
+  tf::Matrix3x3 R;
+
+  if(flag_cv_active)
+    R.setRPY(1.0f, 0.0f, yaw);              //Hard coded similar thing on HLP implyinng CV is active
+  else
+    R.setRPY(0.0f, 0.0f, yaw);              //Hard coded similar thing on HLP implying CV in inactive
+
+  tf::Quaternion q;
+  R.getRotation(q);
+
+  // copy the position and orientation to the pose message
+  tf::quaternionTFToMsg(q, pose_msg.pose.orientation);
+  pose_msg.header.stamp = stamp;
+  pose_msg.pose.position.x = x;
+  pose_msg.pose.position.y = y;
+  pose_msg.pose.position.z = z;
+
+  position_pub.publish(pose_msg);
+}
+
+
 int main(int argc, char *argv[])
 {
-  ros::init(argc, argv, "dummy_pose_publisher");
+  ros::init(argc, argv, "dummy_pos");
   ros::NodeHandle n;
+  position_pub = n.advertise<geometry_msgs::PoseStamped>("/mavros/vision_pose_ned/pose", 200);
 
-  //some dummy position values
-  float px = 1, py = 2 , pz = 3;
+  ros::NodeHandle pnh("~");
+  float px = 3, py = 2 , pz = -1;
+  float roll, pitch, yaw;
+  int rate;
 
-  ros::Rate loop_rate(20);
-  position_pub = n.advertise<geometry_msgs::PoseStamped>("/mavros/vision_pose/pose", 200);
+  pnh.param("x", px, float(3.0f));
+  pnh.param("y", py, float(2.0f));
+  pnh.param("z", pz, float(-1.0f));
+  pnh.param("yaw", yaw, float(1.5f));
+  pnh.param("rate", rate, int(20));
 
-  //sending 0 rotation and dummy position values through a position message
-  pose_msg.pose.orientation.w = 1;
-  pose_msg.pose.orientation.x = 0;
-  pose_msg.pose.orientation.y = 0;
-  pose_msg.pose.orientation.z = 0;
-  pose_msg.pose.position.x = px;
-  pose_msg.pose.position.y = py;
-  pose_msg.pose.position.z = pz;
+  ros::Rate loop_rate(rate);
 
-//  for(int i = 0; i<5 ; i++)
   while(ros::ok())
   {
-    ros::spinOnce();
 
-    pose_msg.header.stamp = ros::Time::now();
-    position_pub.publish(pose_msg);
-    ROS_INFO("Sending Position : [%.3f, %.3f, %.3f]", px, py, pz);
+    ros::Time stamp_now = ros::Time::now();
+    publishSensorPos(stamp_now, px, py, pz, yaw, true);
 
+    ROS_INFO("Pos [%.3f, %.3f, %.3f]; Y: [%.3f]", px, py, pz, yaw);
     loop_rate.sleep();
   }
 

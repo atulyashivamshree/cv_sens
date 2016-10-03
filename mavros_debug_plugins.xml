@@ -11,4 +11,7 @@
 	<class name="local_position_ned" type="mavplugin::LocalPositionNEDPlugin" base_class_type="mavplugin::MavRosPlugin">
 		<description> Publishes the position and velocity in the NED frame as used in the FCU</description>
 	</class>
+	<class name="vision_pose_ned" type="mavplugin::VisionPoseNEDPlugin" base_class_type="mavplugin::MavRosPlugin">
+		<description>Takes in position and orientation in the NED frame and transfers them to FCU</description>
+	</class>
 </library>
